@@ -26,7 +26,8 @@ small step at a time.
 cargo fmt --check
 cargo test --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo zigbuild --target armv7-unknown-linux-musleabihf --release
+cargo zigbuild -p ferrink-shell --bin ferrink-shell-kindle \
+  --features kindle-runtime --target armv7-unknown-linux-musleabihf --release
 ```
 
 The release build is tuned for a compact binary. `cargo zigbuild` is used for
