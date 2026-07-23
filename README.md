@@ -1,24 +1,17 @@
 # ferrink
 
-Ferrink is a small, experimental Rust launcher for Linux-based E Ink readers.
-It gives locally installed apps a calm home screen, hands off cleanly to those
-apps, and comes back when they close. The UI uses Slint; the rest is ordinary
-Rust with a deliberately small dependency set.
+Ferrink is a Rust launcher and home screen for E Ink readers. It opens locally
+installed apps, gives them the screen while they run, and returns to Ferrink
+when they close.
 
-Ferrink is unofficial software and is not affiliated with or endorsed by
-Amazon, Slint, KOReader, or any device manufacturer.
+It is built with Slint and designed to feel at home on a compact, grayscale,
+touch-first reader.
 
-## A note before you tinker
+## Status
 
-This is source code for curious tinkerers, not a one-click device installer.
-It contains host tests, example profiles, and reversible tools. It deliberately
-does **not** include anyone's device details, screenshots, network settings,
-keys, passwords, or app configuration.
-
-The checked-in `reference-*` profiles are made-up test data; they are not a
-recipe for a particular reader. If you try Ferrink on your own hardware, make
-your own local profile, keep a way back to stock software, and take it one
-small step at a time.
+Ferrink is an early project for people who enjoy adapting software to their own
+hardware. It is not a ready-made installer yet. The sample `reference-*`
+profiles are test fixtures, not instructions for a particular reader.
 
 ## Build it
 
@@ -34,27 +27,17 @@ The release build is tuned for a compact binary. `cargo zigbuild` is used for
 cross-compiled device builds so the necessary C headers and target support are
 available without a bespoke toolchain.
 
-## If you connect a reader
+## Using it with a reader
 
-Keep real connection details out of this folder. `tools/kindle` reads the path
-you supply in `KINDLE_SSH_CONFIG`; start with the harmless
-[`tools/kindle-ssh.config.example`](tools/kindle-ssh.config.example) and save
-your real copy elsewhere.
+The project includes tools for local development and a reversible boot setup.
+The [device-tool guide](docs/KINDLE_DEVICE_TOOL.md) explains what each tool
+does, what it needs, and how to keep your own configuration local.
 
-The boot installer also asks you for a local `FERRINK_DEVICE_PROFILE` and
-`FERRINK_STOCK_GUI_SHA256`. They are intentionally not in the repository. The
-[device-tool guide](docs/KINDLE_DEVICE_TOOL.md) explains what each tool does
-before it changes anything.
-
-## Documentation
+## More detail
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Device-tool guide](docs/KINDLE_DEVICE_TOOL.md)
-- [Upstream research boundaries](docs/UPSTREAM_RESEARCH.md)
-- [Licensing and distribution](docs/LICENSING_AND_DISTRIBUTION.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Acknowledgments](ACKNOWLEDGMENTS.md)
-- [Public-source audit](PUBLIC_SOURCE_AUDIT.md)
 - [Contributing](CONTRIBUTING.md)
 
 ## License
