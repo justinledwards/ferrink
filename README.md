@@ -7,6 +7,10 @@ when they close.
 It is built with Slint and designed to feel at home on a compact, grayscale,
 touch-first reader.
 
+The name is pronounced **fair-ink**. It blends *ferric*—iron—with *ink*: a
+small nod to the physical character of an electronic-paper reader and the
+books it carries.
+
 ## Status
 
 Ferrink is an early project for people who enjoy adapting software to their own
