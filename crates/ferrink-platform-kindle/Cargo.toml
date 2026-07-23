@@ -1,0 +1,53 @@
+[package]
+name = "ferrink-platform-kindle"
+description = "Host-testable ferrink Kindle foreground adapter core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+linux-device = ["dep:libc"]
+linux-foreground-display = ["linux-device"]
+linux-input-grab-card = ["linux-touch-read-card"]
+linux-touch-read-card = ["linux-device"]
+linux-pixel-card = ["linux-stock-repaint"]
+linux-stock-repaint = ["linux-device"]
+
+[dependencies]
+ferrink-platform = { path = "../ferrink-platform" }
+# Slint's software renderer reaches both crates transitively. Re-declaring
+# these without link-time Fontconfig defaults keeps isolated ARM builds as
+# self-contained as the shell's workspace build.
+fontdb = { version = "0.23", default-features = false, features = ["fs", "memmap", "std"] }
+fontique = { version = "0.11", default-features = false, features = ["fontconfig-dlopen", "std"] }
+libc = { workspace = true, optional = true }
+serde_json.workspace = true
+slint.workspace = true
+
+[[bin]]
+name = "ferrink-revalidate-kindle"
+path = "src/bin/ferrink-revalidate-kindle.rs"
+required-features = ["linux-device"]
+
+[[bin]]
+name = "ferrink-stock-repaint-kindle"
+path = "src/bin/ferrink-stock-repaint-kindle.rs"
+required-features = ["linux-stock-repaint"]
+
+[[bin]]
+name = "ferrink-pixel-card-kindle"
+path = "src/bin/ferrink-pixel-card-kindle.rs"
+required-features = ["linux-pixel-card"]
+
+[[bin]]
+name = "ferrink-touch-read-card-kindle"
+path = "src/bin/ferrink-touch-read-card-kindle.rs"
+required-features = ["linux-touch-read-card"]
+
+[[bin]]
+name = "ferrink-input-grab-card-kindle"
+path = "src/bin/ferrink-input-grab-card-kindle.rs"
+required-features = ["linux-input-grab-card"]

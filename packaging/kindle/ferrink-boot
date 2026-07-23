@@ -1,0 +1,105 @@
+#!/bin/sh
+set -eu
+
+ferrink_root=/var/local/ferrink
+active_file=${FERRINK_ACTIVE_FILE:-$ferrink_root/active-version}
+runtime_root=/var/run/ferrink
+rootfs_disable=/opt/ferrink/disable
+local_disable=$ferrink_root/disable
+mounts_file=${FERRINK_MOUNTS_FILE:-/proc/mounts}
+userstore_root=${FERRINK_USERSTORE_ROOT:-/mnt/us}
+userstore_disable=$userstore_root/BOOT_KINDLEOS
+home_assistant_manifest=$userstore_root/ferrink/apps/io.home-assistant.dashboard/manifest.toml
+koreader_manifest=$userstore_root/ferrink/apps/org.koreader.reader/manifest.toml
+mode=${1:-run}
+
+log() {
+    /usr/bin/logger -t ferrink-boot -- "$1" 2>/dev/null || true
+    printf 'ferrink-boot: %s\n' "$1" >&2
+}
+
+fallback() {
+    log "$1"
+    exit 75
+}
+
+case "$mode" in
+    run|--preflight) ;;
+    *) fallback "unknown mode" ;;
+esac
+
+if [ "$mode" = "run" ]; then
+    for sentinel in "$rootfs_disable" "$local_disable"; do
+        [ ! -e "$sentinel" ] || fallback "stock selected by disable sentinel"
+    done
+fi
+
+if ! /usr/bin/awk -v userstore="$userstore_root" '
+    $2 == userstore { mounted = 1 }
+    END { exit mounted ? 0 : 1 }
+' "$mounts_file"; then
+    fallback "userstore is unavailable"
+fi
+if [ "$mode" = "run" ]; then
+    [ ! -e "$userstore_disable" ] || fallback "stock selected by disable sentinel"
+fi
+for manifest in "$home_assistant_manifest" "$koreader_manifest"; do
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] \
+        || fallback "application catalog is unavailable"
+done
+
+[ -f "$active_file" ] && [ ! -L "$active_file" ] \
+    || fallback "active version file is unavailable"
+IFS= read -r version <"$active_file" || fallback "active version is unreadable"
+case "$version" in
+    ''|*[!A-Za-z0-9._-]*) fallback "active version is invalid" ;;
+esac
+
+version_dir=$ferrink_root/versions/$version
+[ -d "$version_dir" ] && [ ! -L "$version_dir" ] \
+    || fallback "active version directory is unavailable"
+for executable in ferrink-probe ferrink-shell-guardian-kindle ferrink-shell-kindle; do
+    [ -f "$version_dir/$executable" ] && [ -x "$version_dir/$executable" ] \
+        && [ ! -L "$version_dir/$executable" ] \
+        || fallback "active executable is unavailable"
+done
+[ -f "$version_dir/device-profile.toml" ] \
+    && [ ! -L "$version_dir/device-profile.toml" ] \
+    || fallback "device profile is unavailable"
+[ -f "$version_dir/SHA256SUMS" ] && [ ! -L "$version_dir/SHA256SUMS" ] \
+    || fallback "version hash manifest is unavailable"
+
+if ! (cd "$version_dir" && /usr/bin/sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+    fallback "active version failed hash verification"
+fi
+
+/bin/mkdir -p "$runtime_root" || fallback "runtime directory is unavailable"
+/bin/chmod 700 "$runtime_root" || fallback "runtime directory mode failed"
+report=$runtime_root/report-$$.json
+[ ! -e "$report" ] || fallback "fresh report path already exists"
+if ! /usr/bin/timeout -t 20 "$version_dir/ferrink-probe" --output "$report"; then
+    fallback "passive boot probe failed"
+fi
+
+if [ "$mode" = "--preflight" ]; then
+    log "preflight passed for $version"
+    exit 0
+fi
+
+boot_log=$ferrink_root/state/last-boot.log
+if [ -e "$boot_log" ]; then
+    [ -f "$boot_log" ] && [ ! -L "$boot_log" ] \
+        || fallback "boot log path is unsafe"
+fi
+: >"$boot_log" || fallback "boot log is unavailable"
+/bin/chmod 600 "$boot_log" || fallback "boot log mode failed"
+
+exec "$version_dir/ferrink-shell-guardian-kindle" \
+    --profile "$version_dir/device-profile.toml" \
+    --report "$report" \
+    --shell "$version_dir/ferrink-shell-kindle" \
+    --application-manifest "$home_assistant_manifest" \
+    --application-manifest "$koreader_manifest" \
+    --crash-state "$ferrink_root/state/crash-budget-v1" \
+    --startup-mode stock-starting \
+    >>"$boot_log" 2>&1

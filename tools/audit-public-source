@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$repo_dir"
+
+fail=0
+
+check_absent() {
+    label=$1
+    pattern=$2
+    if git grep -n -I -E "$pattern" -- . \
+        ':!tools/kindle-ssh.config.example' \
+        ':!tools/audit-public-source' \
+        ':!LICENSES/DEPENDENCY_LICENSES.tsv' \
+        ':!PUBLIC_SOURCE_AUDIT.md'; then
+        printf 'public-source audit: found %s\n' "$label" >&2
+        fail=1
+    fi
+}
+
+forbidden_paths='(^|/)(AGENTS\.md|kindle-ssh\.config)$|^docs/evidence/|launcher-background-waves-reference\.png$'
+if git ls-files --cached --others --exclude-standard | grep -E "$forbidden_paths"; then
+    printf '%s\n' 'public-source audit: found a private-path category' >&2
+    fail=1
+fi
+
+check_absent 'private absolute path' '(^|[^[:alnum:]_])/(Users|home)/[^/[:space:]]+'
+check_absent 'legacy device marker' '\b(0WM|B024|5\.13\.7|5\.6\.1\.1)\b'
+check_absent 'private hostname' '\bmonolith\b'
+
+if [ "$fail" -ne 0 ]; then
+    exit 1
+fi
+
+printf '%s\n' 'public-source audit: passed'

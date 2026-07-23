@@ -1,0 +1,371 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+kindle=$tool_dir/kindle
+target_dir=$repo_dir/target/armv7-unknown-linux-musleabihf/release
+probe=$target_dir/ferrink-probe
+guardian=$target_dir/ferrink-shell-guardian-kindle
+shell=$target_dir/ferrink-shell-kindle
+profile=${FERRINK_DEVICE_PROFILE:-}
+boot=$repo_dir/packaging/kindle/ferrink-boot
+job=$repo_dir/packaging/kindle/ferrink.conf
+stock_gui_sha=${FERRINK_STOCK_GUI_SHA256:-}
+
+usage() {
+    cat <<'EOF'
+usage: tools/install-kindle-boot COMMAND
+
+Commands:
+  install    stage the reviewed ARM payload and enable the reversible Upstart job
+  update     stage and activate a payload while the stock-disable sentinel is set
+  status     inspect the installed payload, disable sentinels, and Upstart jobs
+  disable    create the persistent next-boot stock fallback sentinel
+  preview    preserve and move aside both disable sentinels for one observed boot
+
+The installer never builds, reboots, deletes an installed version, or modifies
+any vendor job except the exact reviewed lab126_gui automatic-start line.
+
+Environment required for install and update:
+  FERRINK_DEVICE_PROFILE       local reviewed profile, outside this repository
+  FERRINK_STOCK_GUI_SHA256     reviewed lowercase SHA-256 of lab126_gui.conf
+EOF
+}
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 2
+}
+
+validate_arm_artifact() {
+    artifact=$1
+    [ -f "$artifact" ] || die "missing artifact: $artifact"
+    description=$(file "$artifact")
+    case "$description" in
+        *'ELF 32-bit LSB executable, ARM, EABI5'*'statically linked'*'stripped'*) ;;
+        *) die "artifact is not a stripped static ARM EABI5 executable: $artifact" ;;
+    esac
+}
+
+validate_local_inputs() {
+    [ -n "$profile" ] || die 'set FERRINK_DEVICE_PROFILE to a reviewed local profile'
+    [ -f "$profile" ] && [ ! -L "$profile" ] \
+        || die "FERRINK_DEVICE_PROFILE is not a regular file: $profile"
+    case "$stock_gui_sha" in
+        ''|*[!0123456789abcdef]*)
+            die 'FERRINK_STOCK_GUI_SHA256 must be 64 lowercase hexadecimal characters'
+            ;;
+    esac
+    [ "${#stock_gui_sha}" -eq 64 ] \
+        || die 'FERRINK_STOCK_GUI_SHA256 must be 64 lowercase hexadecimal characters'
+}
+
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+
+case "$command" in
+    help|-h|--help)
+        usage
+        ;;
+    status)
+        [ "$#" -eq 0 ] || die "status takes no arguments"
+        "$kindle" script <<'REMOTE'
+set -eu
+root=/var/local/ferrink
+printf 'root='
+[ -d "$root" ] && printf 'present\n' || printf 'absent\n'
+for sentinel in /opt/ferrink/disable "$root/disable" /mnt/us/BOOT_KINDLEOS; do
+    [ -e "$sentinel" ] && state=present || state=absent
+    printf 'sentinel:%s=%s\n' "$sentinel" "$state"
+done
+if [ -f "$root/active-version" ]; then
+    printf 'active='; sed -n '1p' "$root/active-version"
+fi
+for file in /etc/init/ferrink.conf /etc/init/lab126_gui.conf; do
+    if [ -f "$file" ]; then
+        printf 'sha256:%s=' "$file"
+        sha256sum "$file" | awk '{print $1}'
+        printf 'start:%s=' "$file"
+        grep -m1 '^start on ' "$file" || true
+    else
+        printf 'file:%s=absent\n' "$file"
+    fi
+done
+/sbin/initctl status ferrink 2>&1 || true
+/sbin/initctl status lab126_gui 2>&1 || true
+REMOTE
+        ;;
+    disable)
+        [ "$#" -eq 0 ] || die "disable takes no arguments"
+        "$kindle" script <<'REMOTE'
+set -eu
+root=/var/local/ferrink
+[ -d "$root" ] && [ ! -L "$root" ]
+umask 077
+: >"$root/disable.new.$$"
+chmod 600 "$root/disable.new.$$"
+mv "$root/disable.new.$$" "$root/disable"
+sync
+printf 'next_boot=stock\n'
+REMOTE
+        ;;
+    preview)
+        [ "$#" -eq 0 ] || die "preview takes no arguments"
+        "$kindle" script <<'REMOTE'
+set -eu
+root=/var/local/ferrink
+local_disable=$root/disable
+userstore_disable=/mnt/us/BOOT_KINDLEOS
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+local_saved=$root/disable.preview-$stamp
+userstore_saved=/mnt/us/BOOT_KINDLEOS.preview-$stamp
+local_moved=0
+
+rollback() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "$status" -ne 0 ] && [ "$local_moved" -eq 1 ]; then
+        mv "$local_saved" "$local_disable" 2>/dev/null || true
+        sync
+    fi
+    exit "$status"
+}
+trap rollback EXIT HUP INT TERM
+
+[ -f "$local_disable" ] && [ ! -L "$local_disable" ]
+[ ! -e "$userstore_disable" ] \
+    || { [ -f "$userstore_disable" ] && [ ! -L "$userstore_disable" ]; }
+[ ! -e "$local_saved" ]
+[ ! -e "$userstore_saved" ]
+mv "$local_disable" "$local_saved"
+local_moved=1
+if [ -e "$userstore_disable" ]; then
+    mv "$userstore_disable" "$userstore_saved"
+fi
+sync
+trap - EXIT HUP INT TERM
+printf 'next_boot=ferrink-preview\n'
+printf 'saved:%s\n' "$local_saved"
+if [ -e "$userstore_saved" ]; then
+    printf 'saved:%s\n' "$userstore_saved"
+fi
+REMOTE
+        ;;
+    install|update)
+        operation=$command
+        [ "$#" -eq 0 ] || die "$operation takes no arguments"
+        validate_local_inputs
+        validate_arm_artifact "$probe"
+        validate_arm_artifact "$guardian"
+        validate_arm_artifact "$shell"
+        [ -x "$boot" ] || die "boot dispatcher is not executable: $boot"
+        [ -f "$job" ] || die "missing Upstart job: $job"
+        sh -n "$boot"
+        sh -n "$job"
+
+        guardian_sha=$(shasum -a 256 "$guardian" | awk '{print $1}')
+        shell_sha=$(shasum -a 256 "$shell" | awk '{print $1}')
+        boot_sha=$(shasum -a 256 "$boot" | awk '{print $1}')
+        job_sha=$(shasum -a 256 "$job" | awk '{print $1}')
+        version="0.0.1-${guardian_sha%????????????????????????????????????????????????????}-${shell_sha%????????????????????????????????????????????????????}-${boot_sha%????????????????????????????????????????????????????????}"
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        package_dir=$(mktemp -d -t ferrink-boot-package.XXXXXX)
+        remote_stage="/var/local/ferrink-stage-$stamp"
+        cleanup_package() {
+            rm -rf -- "$package_dir"
+        }
+        trap cleanup_package EXIT HUP INT TERM
+
+        cp "$probe" "$package_dir/ferrink-probe"
+        cp "$guardian" "$package_dir/ferrink-shell-guardian-kindle"
+        cp "$shell" "$package_dir/ferrink-shell-kindle"
+        cp "$profile" "$package_dir/device-profile.toml"
+        cp "$boot" "$package_dir/ferrink-boot"
+        cp "$job" "$package_dir/ferrink.conf"
+        chmod 755 \
+            "$package_dir/ferrink-probe" \
+            "$package_dir/ferrink-shell-guardian-kindle" \
+            "$package_dir/ferrink-shell-kindle" \
+            "$package_dir/ferrink-boot"
+        chmod 644 "$package_dir/device-profile.toml" "$package_dir/ferrink.conf"
+        (
+            cd "$package_dir"
+            shasum -a 256 \
+                ferrink-probe \
+                ferrink-shell-guardian-kindle \
+                ferrink-shell-kindle \
+                device-profile.toml \
+                ferrink-boot \
+                ferrink.conf >SHA256SUMS
+        )
+
+        "$kindle" script "$remote_stage" <<'REMOTE'
+set -eu
+stage=$1
+[ ! -e "$stage" ] || { printf 'remote stage already exists: %s\n' "$stage" >&2; exit 2; }
+REMOTE
+        "$kindle" push "$package_dir" "$remote_stage"
+
+        "$kindle" script \
+            "$remote_stage" \
+            "$version" \
+            "$operation" \
+            "$stock_gui_sha" \
+            "$job_sha" <<'REMOTE'
+set -eu
+stage=$1
+version=$2
+operation=$3
+expected_original=$4
+expected_job=$5
+root=/var/local/ferrink
+version_dir=$root/versions/$version
+candidate=$root/active-version.candidate.$$
+
+cleanup_candidate() {
+    rm -f "$candidate"
+}
+trap cleanup_candidate EXIT HUP INT TERM
+
+[ -d "$stage" ] && [ ! -L "$stage" ]
+(cd "$stage" && sha256sum -c SHA256SUMS)
+[ ! -e "$version_dir" ] || { printf 'version already exists: %s\n' "$version_dir" >&2; exit 2; }
+[ ! -e "$root" ] || { [ -d "$root" ] && [ ! -L "$root" ]; }
+
+if [ "$operation" = update ]; then
+    backup=$root/install-state/lab126_gui.conf.original
+    installed_job=/etc/init/ferrink.conf
+    vendor_job=/etc/init/lab126_gui.conf
+    [ -f "$root/disable" ] && [ ! -L "$root/disable" ]
+    [ -f "$backup" ] && [ ! -L "$backup" ]
+    [ "$(sha256sum "$backup" | awk '{print $1}')" = "$expected_original" ]
+    [ -f "$installed_job" ] && [ ! -L "$installed_job" ]
+    [ "$(sha256sum "$installed_job" | awk '{print $1}')" = "$expected_job" ]
+    [ "$(sha256sum "$stage/ferrink.conf" | awk '{print $1}')" = "$expected_job" ]
+    expected_vendor=$(sed '1s/^start on langpicker_ready$/start on ferrink_stock_requested/' \
+        "$backup" | sha256sum | awk '{print $1}')
+    [ -f "$vendor_job" ] && [ ! -L "$vendor_job" ]
+    [ "$(sha256sum "$vendor_job" | awk '{print $1}')" = "$expected_vendor" ]
+else
+    [ ! -e /etc/init/ferrink.conf ]
+    [ ! -e "$root/install-state/lab126_gui.conf.original" ]
+    [ -f /etc/init/lab126_gui.conf ] && [ ! -L /etc/init/lab126_gui.conf ]
+    [ "$(sha256sum /etc/init/lab126_gui.conf | awk '{print $1}')" = "$expected_original" ]
+fi
+
+mkdir -p "$root/versions" "$root/state" "$root/install-state"
+chmod 700 "$root" "$root/versions" "$root/state" "$root/install-state"
+mv "$stage" "$version_dir"
+chmod 700 "$version_dir"
+
+umask 077
+printf '%s\n' "$version" >"$candidate"
+chmod 600 "$candidate"
+FERRINK_ACTIVE_FILE=$candidate "$version_dir/ferrink-boot" --preflight
+
+cp "$version_dir/ferrink-boot" "$root/boot.new.$$"
+chmod 755 "$root/boot.new.$$"
+mv "$root/boot.new.$$" "$root/boot"
+
+if [ -f "$root/active-version" ]; then
+    cp "$root/active-version" "$root/previous-version.new.$$"
+    chmod 600 "$root/previous-version.new.$$"
+    mv "$root/previous-version.new.$$" "$root/previous-version"
+fi
+printf '%s\n' "$version" >"$root/active-version.new.$$"
+chmod 600 "$root/active-version.new.$$"
+mv "$root/active-version.new.$$" "$root/active-version"
+sync
+printf 'staged_version=%s\n' "$version"
+REMOTE
+
+        if [ "$operation" = update ]; then
+            "$0" status
+            printf 'updated_version=%s\n' "$version"
+            exit 0
+        fi
+
+        "$kindle" script "$original_gui_sha" "$job_sha" <<'REMOTE'
+set -eu
+expected_original=$1
+expected_job=$2
+root=/var/local/ferrink
+original=/etc/init/lab126_gui.conf
+installed_job=/etc/init/ferrink.conf
+backup=$root/install-state/lab126_gui.conf.original
+source_job=$root/versions/$(sed -n '1p' "$root/active-version")/ferrink.conf
+mutation_started=0
+committed=0
+root_rw=0
+
+rollback() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "$status" -ne 0 ] && [ "$mutation_started" -eq 1 ]; then
+        if [ "$root_rw" -eq 0 ]; then
+            /usr/sbin/mntroot rw >/dev/null 2>&1 || true
+            root_rw=1
+        fi
+        cp "$backup" "$original" 2>/dev/null || true
+        rm -f "$installed_job"
+        sync
+        /usr/sbin/mntroot ro >/dev/null 2>&1 || true
+        /sbin/initctl reload-configuration >/dev/null 2>&1 || true
+    elif [ "$root_rw" -eq 1 ]; then
+        /usr/sbin/mntroot ro >/dev/null 2>&1 || true
+    fi
+    exit "$status"
+}
+trap rollback EXIT HUP INT TERM
+
+[ -f "$original" ] && [ ! -L "$original" ]
+[ ! -e "$installed_job" ]
+[ "$(sha256sum "$original" | awk '{print $1}')" = "$expected_original" ]
+[ "$(sed -n '1p' "$original")" = 'start on langpicker_ready' ]
+[ -f "$source_job" ] && [ ! -L "$source_job" ]
+[ "$(sha256sum "$source_job" | awk '{print $1}')" = "$expected_job" ]
+[ ! -e "$backup" ]
+cp -p "$original" "$backup"
+chmod 600 "$backup"
+[ "$(sha256sum "$backup" | awk '{print $1}')" = "$expected_original" ]
+printf '%s  %s\n' "$expected_original" "$original" >"$root/install-state/lab126_gui.sha256"
+
+/usr/sbin/mntroot rw
+root_rw=1
+mutation_started=1
+mkdir -p /opt/ferrink
+chmod 755 /opt/ferrink
+sed '1s/^start on langpicker_ready$/start on ferrink_stock_requested/' \
+    "$original" >"/etc/init/.lab126_gui.conf.ferrink.$$"
+[ "$(grep -c '^start on ferrink_stock_requested$' "/etc/init/.lab126_gui.conf.ferrink.$$")" -eq 1 ]
+chown root:root "/etc/init/.lab126_gui.conf.ferrink.$$"
+chmod 644 "/etc/init/.lab126_gui.conf.ferrink.$$"
+mv "/etc/init/.lab126_gui.conf.ferrink.$$" "$original"
+cp "$source_job" "/etc/init/.ferrink.conf.$$"
+chown root:root "/etc/init/.ferrink.conf.$$"
+chmod 644 "/etc/init/.ferrink.conf.$$"
+mv "/etc/init/.ferrink.conf.$$" "$installed_job"
+sync
+/usr/sbin/mntroot ro
+root_rw=0
+
+/sbin/initctl reload-configuration
+[ "$(/sbin/initctl status ferrink)" = 'ferrink stop/waiting' ]
+[ "$(sha256sum "$installed_job" | awk '{print $1}')" = "$expected_job" ]
+[ "$(sed -n '1p' "$original")" = 'start on ferrink_stock_requested' ]
+printf '%s  %s\n' "$expected_job" "$installed_job" >"$root/install-state/ferrink-job.sha256"
+printf '%s\n' enabled >"$root/install-state/boot-state"
+sync
+committed=1
+trap - EXIT HUP INT TERM
+printf 'boot_integration=enabled\n'
+REMOTE
+
+        "$0" status
+        printf 'installed_version=%s\n' "$version"
+        ;;
+    *)
+        die "unknown command: $command (try: tools/install-kindle-boot help)"
+        ;;
+esac

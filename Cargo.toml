@@ -1,0 +1,50 @@
+[workspace]
+members = [
+    "crates/ferrink-characterize-display",
+    "crates/ferrink-characterize-plan",
+    "crates/ferrink-manifest",
+    "crates/ferrink-platform",
+    "crates/ferrink-platform-kindle",
+    "crates/ferrink-probe",
+    "crates/ferrink-shell",
+    "crates/ferrink-supervisor",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.92"
+license = "GPL-3.0-only"
+
+[workspace.dependencies]
+libc = "0.2.186"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+slint = { git = "https://github.com/slint-ui/slint.git", rev = "3c5e0a606d8843fabaf00c5fbbde4fd5be08ba4f", default-features = false, features = [
+    "compat-1-2",
+    "renderer-software",
+    "software-renderer-path",
+    "std",
+    "unstable-fontique-011",
+] }
+slint-build = { git = "https://github.com/slint-ui/slint.git", rev = "3c5e0a606d8843fabaf00c5fbbde4fd5be08ba4f" }
+toml = "0.9"
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# Slint's generated UI and its feature combinations otherwise create very
+# large duplicate incremental caches. Keep useful line tables for local crash
+# diagnosis without retaining full debug data or per-query incremental state.
+[profile.dev]
+debug = 1
+incremental = false
+
+[profile.test]
+debug = 1
+incremental = false

@@ -1,0 +1,47 @@
+schema_version = 1
+id = "reference-portrait"
+display_name = "Synthetic portrait reference"
+review_status = "observed_foreground"
+
+[identity]
+serial_prefixes = ["TEST"]
+firmware_versions = ["0.0.1-test"]
+
+[display]
+width = 1264
+height = 1680
+bits_per_pixel = 8
+pixel_layout = "grayscale8"
+rotation = 0
+epdc_update_abi = "zelda-88"
+
+[requirements]
+multitouch_axes = true
+
+[runtime]
+stock_repaint = "xrefresh_display0"
+
+[runtime.framebuffer]
+driver_id = "mxc_epdc_fb"
+
+[runtime.touch]
+name = "cyttsp5_mt"
+x_axis_code = 53
+y_axis_code = 54
+swap_xy = false
+invert_x = false
+invert_y = false
+rotation = "upright"
+
+[runtime.refresh]
+update_abi = "zelda88"
+partial = true
+full = true
+
+[evidence]
+level = "observed"
+source = "synthetic public test fixture; not a device capture or support claim"
+notes = [
+    "The values exercise profile parsing and runtime resolution only.",
+    "Do not use this file to operate a physical device.",
+]

@@ -1,0 +1,10 @@
+[package]
+name = "ferrink-characterize-plan"
+description = "Hardware-incapable offline validator for ferrink characterization plans"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ferrink-platform = { path = "../ferrink-platform" }

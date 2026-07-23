@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "plan_id": "reference-portrait-display-mechanism-v1",
+  "single_use": true,
+  "profile_id": "reference-portrait",
+  "evidence": {
+    "probe_version": "0.0.1",
+    "serial_prefix": "TEST",
+    "firmware_contains": "0.0.1-test",
+    "kernel_release": "reference-kernel-portrait",
+    "machine": "armv7l",
+    "input_event_abi": {
+      "pointer_width_bits": 32,
+      "libc_timeval_bytes": 8,
+      "libc_input_event_bytes": 16
+    },
+    "framebuffer": {
+      "device": "/dev/fb0",
+      "driver_id": "mxc_epdc_fb",
+      "visible_width": 1264,
+      "visible_height": 1680,
+      "virtual_width": 1280,
+      "virtual_height": 3584,
+      "x_offset": 0,
+      "y_offset": 0,
+      "line_length": 1280,
+      "memory_length": 4587520,
+      "bits_per_pixel": 8,
+      "grayscale": 1,
+      "pixel_layout": "grayscale8",
+      "rotation": 0,
+      "red": {
+        "offset": 0,
+        "length": 8,
+        "msb_right": 0
+      },
+      "green": {
+        "offset": 0,
+        "length": 8,
+        "msb_right": 0
+      },
+      "blue": {
+        "offset": 0,
+        "length": 8,
+        "msb_right": 0
+      },
+      "transparency": {
+        "offset": 0,
+        "length": 0,
+        "msb_right": 0
+      }
+    }
+  },
+  "output_parent": "/mnt/us/ferrink/evidence",
+  "request": {
+    "device": "/dev/fb0",
+    "open_mode": "read_only",
+    "memory_access": "none",
+    "request_ioctl": 1079526958,
+    "region": {
+      "x": 600,
+      "y": 808,
+      "width": 64,
+      "height": 64
+    },
+    "abi": {
+      "kind": "zelda88",
+      "request_size": 88
+    },
+    "waveform_mode": 257,
+    "update_mode": 0,
+    "marker": 1179320321,
+    "temperature": 4096,
+    "flags": 0,
+    "dither_mode": 0,
+    "quant_bit": 0,
+    "alternate_buffer_zeroed": true,
+    "histogram_modes": [0, 0],
+    "timestamps": [0, 0],
+    "completion_wait_millis": null,
+    "maximum_attempts": 1
+  }
+}

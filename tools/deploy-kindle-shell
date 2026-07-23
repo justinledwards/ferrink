@@ -1,0 +1,401 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+kindle="$tool_dir/kindle"
+artifact="$repo_dir/target/armv7-unknown-linux-musleabihf/release/ferrink-shell-kindle"
+guardian_artifact="$repo_dir/target/armv7-unknown-linux-musleabihf/release/ferrink-shell-guardian-kindle"
+background_asset="$repo_dir/docs/design/launcher-background-topography-6shade.png"
+label=deploy
+
+usage() {
+    cat <<'EOF'
+usage: tools/deploy-kindle-shell [--artifact PATH] [--guardian-artifact PATH]
+                                 [--background-asset PATH]
+                                 [--label NAME]
+
+Stages one reviewed ARM shell in a new /mnt/us directory, creates a fresh
+passive report, verifies the shell and guardian hashes, atomically installs the
+reviewed optional launcher backgrounds, enters from either exact healthy stock
+or the exact current manual/boot-managed guardian, launches the replacement,
+and verifies guardian/shell readiness.
+
+This command does not build, modify boot configuration, retry a failed launch,
+remove old run directories, or overwrite an existing run path. Each managed
+background file is replaced atomically after exact validation.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --artifact)
+            [ "$#" -ge 2 ] || { printf '%s\n' '--artifact requires a path' >&2; exit 2; }
+            artifact=$2
+            shift 2
+            ;;
+        --background-asset)
+            [ "$#" -ge 2 ] || { printf '%s\n' '--background-asset requires a path' >&2; exit 2; }
+            background_asset=$2
+            shift 2
+            ;;
+        --guardian-artifact)
+            [ "$#" -ge 2 ] || { printf '%s\n' '--guardian-artifact requires a path' >&2; exit 2; }
+            guardian_artifact=$2
+            shift 2
+            ;;
+        --label)
+            [ "$#" -ge 2 ] || { printf '%s\n' '--label requires a value' >&2; exit 2; }
+            label=$2
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            printf 'unknown argument: %s\n' "$1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
+
+case "$label" in
+    ''|*[!A-Za-z0-9._-]*)
+        printf '%s\n' 'label must contain only letters, digits, dot, underscore, or hyphen' >&2
+        exit 2
+        ;;
+esac
+
+[ -f "$artifact" ] || { printf 'missing artifact: %s\n' "$artifact" >&2; exit 2; }
+[ -f "$guardian_artifact" ] \
+    || { printf 'missing guardian artifact: %s\n' "$guardian_artifact" >&2; exit 2; }
+[ -f "$background_asset" ] \
+    || { printf 'missing background asset: %s\n' "$background_asset" >&2; exit 2; }
+file "$artifact" | grep -q 'ELF 32-bit LSB executable, ARM, EABI5'
+file "$artifact" | grep -q 'statically linked'
+file "$artifact" | grep -q 'stripped'
+file "$guardian_artifact" | grep -q 'ELF 32-bit LSB executable, ARM, EABI5'
+file "$guardian_artifact" | grep -q 'statically linked'
+file "$guardian_artifact" | grep -q 'stripped'
+file "$background_asset" | grep -q 'PNG image data, 632 x 843, 8-bit/color RGB, non-interlaced'
+artifact_hash=$(shasum -a 256 "$artifact" | awk '{print $1}')
+artifact_size=$(stat -f '%z' "$artifact")
+guardian_hash=$(shasum -a 256 "$guardian_artifact" | awk '{print $1}')
+guardian_size=$(stat -f '%z' "$guardian_artifact")
+background_hash=$(shasum -a 256 "$background_asset" | awk '{print $1}')
+background_size=$(stat -f '%z' "$background_asset")
+[ "$background_size" -gt 0 ] && [ "$background_size" -le 1048576 ] \
+    || { printf 'background asset has invalid size: %s\n' "$background_size" >&2; exit 2; }
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+new_run="/mnt/us/ferrink-${label}-${stamp}"
+background_dir=/mnt/us/ferrink/backgrounds
+active_file=$(mktemp -t ferrink-deploy-active.XXXXXX)
+trap 'rm -f "$active_file"' EXIT HUP INT TERM
+
+"$kindle" script >"$active_file" <<'REMOTE'
+set -eu
+
+resolve_active_run() {
+    root=/var/local/ferrink
+    active_file=$root/active-version
+    [ -f "$active_file" ] && [ ! -L "$active_file" ] \
+        || { printf '%s\n' 'no safe active boot version is available' >&2; exit 2; }
+    IFS= read -r version <"$active_file"
+    case "$version" in
+        ''|*[!A-Za-z0-9._-]*)
+            printf '%s\n' 'active boot version is invalid' >&2
+            exit 2
+            ;;
+    esac
+    active_run=$root/versions/$version
+    [ -d "$active_run" ] && [ ! -L "$active_run" ] \
+        || { printf 'missing active version directory: %s\n' "$active_run" >&2; exit 2; }
+}
+
+pids=$(pgrep ferrink-shell-g 2>/dev/null || true)
+set -- $pids
+case "$#" in
+    0)
+        [ -z "$(pgrep ferrink-shell-k 2>/dev/null || true)" ] \
+            || { printf '%s\n' 'stock entry has an orphaned Ferrink shell' >&2; exit 2; }
+        resolve_active_run
+        origin=stock
+        pid=-
+        start=-
+        run=$active_run
+        startup_mode=stock-running
+        ;;
+    1)
+        origin=guardian
+        pid=$1
+        [ "$(cat "/proc/$pid/comm")" = 'ferrink-shell-g' ]
+        start=$(awk '{print $22}' "/proc/$pid/stat")
+        cwd=$(readlink "/proc/$pid/cwd")
+        case "$cwd" in
+            /mnt/us/ferrink-*)
+                run=$cwd
+                startup_mode=stock-running
+                if [ -f "$run/startup-mode" ] && [ ! -L "$run/startup-mode" ]; then
+                    IFS= read -r recorded_mode <"$run/startup-mode"
+                    case "$recorded_mode" in
+                        stock-running|stock-starting) startup_mode=$recorded_mode ;;
+                        *) printf '%s\n' 'active run has an invalid startup mode' >&2; exit 2 ;;
+                    esac
+                fi
+                ;;
+            /)
+                resolve_active_run
+                run=$active_run
+                [ "$(readlink "/proc/$pid/exe")" = "$run/ferrink-shell-guardian-kindle" ] \
+                    || { printf '%s\n' 'boot-managed guardian executable does not match active version' >&2; exit 2; }
+                startup_mode=stock-starting
+                ;;
+            *)
+                printf 'refusing unexpected guardian directory: %s\n' "$cwd" >&2
+                exit 2
+                ;;
+        esac
+        ;;
+    *)
+        printf 'expected zero or one guardian, found %s\n' "$#" >&2
+        exit 2
+        ;;
+esac
+for name in ferrink-probe ferrink-shell-guardian-kindle device-profile.toml; do
+    [ -f "$run/$name" ] || { printf 'missing active support file: %s\n' "$name" >&2; exit 2; }
+done
+printf '%s|%s|%s|%s|%s\n' "$origin" "$pid" "$start" "$run" "$startup_mode"
+REMOTE
+IFS='|' read -r origin old_pid old_start old_run startup_mode <"$active_file"
+
+"$kindle" script "$old_run" "$new_run" <<'REMOTE'
+set -eu
+old_run=$1
+new_run=$2
+[ ! -e "$new_run" ] || { printf 'refusing existing run directory: %s\n' "$new_run" >&2; exit 2; }
+mkdir "$new_run"
+cp "$old_run/ferrink-probe" "$new_run/ferrink-probe"
+cp "$old_run/device-profile.toml" "$new_run/device-profile.toml"
+chmod 755 "$new_run/ferrink-probe"
+REMOTE
+
+install_background_asset() (
+background_asset=$1
+background_name=$2
+background_hash=$3
+background_size=$4
+case "$background_name" in
+    ''|.*|*[!A-Za-z0-9._-]*|*.png.png)
+        printf 'invalid managed background name: %s\n' "$background_name" >&2
+        exit 2
+        ;;
+esac
+case "$background_name" in
+    *.png) ;;
+    *) printf 'managed background must be a PNG: %s\n' "$background_name" >&2; exit 2 ;;
+esac
+background_target="$background_dir/$background_name"
+background_stage="$background_dir/.$background_name-$stamp-$$.stage"
+"$kindle" script "$background_dir" "$background_target" "$background_stage" <<'REMOTE'
+set -eu
+directory=$1
+target=$2
+stage=$3
+root=/mnt/us/ferrink
+[ -d "$root" ] && [ ! -L "$root" ] \
+    || { printf '%s\n' 'launcher data root is not a safe directory' >&2; exit 2; }
+if [ -e "$directory" ]; then
+    [ -d "$directory" ] && [ ! -L "$directory" ] \
+        || { printf '%s\n' 'background path is not a safe directory' >&2; exit 2; }
+else
+    mkdir "$directory"
+fi
+[ ! -e "$stage" ] \
+    || { printf 'refusing existing background stage: %s\n' "$stage" >&2; exit 2; }
+[ ! -L "$target" ] \
+    || { printf '%s\n' 'background target must not be a symlink' >&2; exit 2; }
+[ ! -e "$target" ] || [ -f "$target" ] \
+    || { printf '%s\n' 'background target must be a regular file' >&2; exit 2; }
+REMOTE
+
+"$kindle" push "$background_asset" "$background_stage"
+
+"$kindle" script \
+    "$background_stage" "$background_target" "$background_hash" "$background_size" <<'REMOTE'
+set -eu
+stage=$1
+target=$2
+expected_hash=$3
+expected_size=$4
+trap 'rm -f "$stage"' EXIT HUP INT TERM
+[ -f "$stage" ] && [ ! -L "$stage" ] \
+    || { printf '%s\n' 'background stage is not a safe regular file' >&2; exit 2; }
+[ "$(stat -c '%s' "$stage")" = "$expected_size" ] \
+    || { printf '%s\n' 'background stage size mismatch' >&2; exit 2; }
+[ "$(sha256sum "$stage" | awk '{print $1}')" = "$expected_hash" ] \
+    || { printf '%s\n' 'background stage hash mismatch' >&2; exit 2; }
+chmod 644 "$stage"
+mv "$stage" "$target"
+trap - EXIT HUP INT TERM
+sync
+REMOTE
+)
+
+install_background_asset \
+    "$background_asset" topography.png "$background_hash" "$background_size"
+
+"$kindle" push "$artifact" "$new_run/ferrink-shell-kindle"
+"$kindle" push "$guardian_artifact" "$new_run/ferrink-shell-guardian-kindle"
+
+"$kindle" script \
+    "$new_run" "$artifact_hash" "$guardian_hash" \
+    "$origin" "$old_pid" "$old_start" "$startup_mode" <<'REMOTE'
+set -eu
+run=$1
+expected_hash=$2
+expected_guardian_hash=$3
+origin=$4
+old_pid=$5
+old_start=$6
+startup_mode=$7
+profile="$run/device-profile.toml"
+report="$run/report.json"
+shell="$run/ferrink-shell-kindle"
+guardian="$run/ferrink-shell-guardian-kindle"
+home_assistant=/mnt/us/ferrink/apps/io.home-assistant.dashboard/manifest.toml
+koreader=/mnt/us/ferrink/apps/org.koreader.reader/manifest.toml
+
+chmod 755 "$shell"
+chmod 755 "$guardian"
+observed_hash=$(sha256sum "$shell" | awk '{print $1}')
+[ "$observed_hash" = "$expected_hash" ] || {
+    printf 'artifact hash mismatch: %s\n' "$observed_hash" >&2
+    exit 2
+}
+observed_guardian_hash=$(sha256sum "$guardian" | awk '{print $1}')
+[ "$observed_guardian_hash" = "$expected_guardian_hash" ] || {
+    printf 'guardian artifact hash mismatch: %s\n' "$observed_guardian_hash" >&2
+    exit 2
+}
+"$run/ferrink-probe" --output "$report"
+grep -q '"warnings": \[\]' "$report"
+case "$startup_mode" in
+    stock-running|stock-starting) ;;
+    *) printf '%s\n' 'replacement has an invalid startup mode' >&2; exit 2 ;;
+esac
+
+stock_ready() {
+    case "$(/sbin/initctl status lab126_gui 2>&1)" in
+        'lab126_gui start/running'*) ;;
+        *) return 1 ;;
+    esac
+    case "$(/sbin/initctl status pillow 2>&1)" in
+        'pillow start/running'*) ;;
+        *) return 1 ;;
+    esac
+    ready_awesome=$(pgrep awesome 2>/dev/null || true)
+    ready_cvm=$(pgrep cvm 2>/dev/null || true)
+    set -- $ready_awesome
+    [ "$#" -eq 1 ] && [ "$(cat "/proc/$1/comm")" = awesome ] || return 1
+    set -- $ready_cvm
+    [ "$#" -eq 1 ] && [ "$(cat "/proc/$1/comm")" = cvm ] || return 1
+}
+
+case "$origin" in
+    guardian)
+        [ -d "/proc/$old_pid" ]
+        [ "$(cat "/proc/$old_pid/comm")" = 'ferrink-shell-g' ]
+        [ "$(awk '{print $22}' "/proc/$old_pid/stat")" = "$old_start" ]
+        kill -TERM "$old_pid"
+
+        waited=0
+        while kill -0 "$old_pid" 2>/dev/null; do
+            [ "$waited" -lt 10 ] || {
+                printf '%s\n' 'old guardian did not exit after SIGTERM; stock should remain recoverable' >&2
+                exit 2
+            }
+            sleep 1
+            waited=$((waited + 1))
+        done
+        [ -z "$(pgrep ferrink-shell-g 2>/dev/null || true)" ]
+        [ -z "$(pgrep ferrink-shell-k 2>/dev/null || true)" ]
+        # Ending the installed boot guardian intentionally triggers its
+        # stock-restoration post-stop job. Wait for that exact handoff before
+        # entering through the normal stock-running lease; otherwise late CVM
+        # startup can write Amazon's progress bar over the replacement frame.
+        waited=0
+        while ! stock_ready; do
+            [ "$waited" -lt 30 ] || {
+                printf '%s\n' 'stock did not become healthy after guardian handoff' >&2
+                exit 2
+            }
+            sleep 1
+            waited=$((waited + 1))
+        done
+        startup_mode=stock-running
+        ;;
+    stock)
+        [ "$old_pid" = - ] && [ "$old_start" = - ]
+        [ -z "$(pgrep ferrink-shell-g 2>/dev/null || true)" ]
+        [ -z "$(pgrep ferrink-shell-k 2>/dev/null || true)" ]
+        stock_ready \
+            || { printf '%s\n' 'stock entry is not exactly healthy' >&2; exit 2; }
+        startup_mode=stock-running
+        ;;
+    *)
+        printf 'replacement has an invalid origin: %s\n' "$origin" >&2
+        exit 2
+        ;;
+esac
+
+printf '%s\n' "$startup_mode" >"$run/startup-mode"
+chmod 600 "$run/startup-mode"
+
+cd "$run"
+setsid "$guardian" \
+    --profile "$profile" \
+    --report "$report" \
+    --shell "$shell" \
+    --application-manifest "$home_assistant" \
+    --application-manifest "$koreader" \
+    --startup-mode "$startup_mode" \
+    >"$run/guardian.log" 2>&1 </dev/null &
+new_guardian=$!
+printf '%s\n' "$new_guardian" >"$run/guardian.pid"
+
+waited=0
+new_shell=
+while [ "$waited" -lt 15 ]; do
+    if ! kill -0 "$new_guardian" 2>/dev/null; then
+        tail -80 "$run/guardian.log" >&2 || true
+        printf '%s\n' 'replacement guardian exited before readiness verification' >&2
+        exit 2
+    fi
+    new_shell=$(pgrep ferrink-shell-k 2>/dev/null || true)
+    set -- $new_shell
+    if [ "$#" -eq 1 ]; then
+        new_shell=$1
+        break
+    fi
+    sleep 1
+    waited=$((waited + 1))
+done
+[ -n "$new_shell" ] || {
+    tail -80 "$run/guardian.log" >&2 || true
+    printf '%s\n' 'replacement shell did not become ready' >&2
+    exit 2
+}
+[ "$(cat "/proc/$new_guardian/comm")" = 'ferrink-shell-g' ]
+[ "$(cat "/proc/$new_shell/comm")" = 'ferrink-shell-k' ]
+[ "$(readlink "/proc/$new_guardian/cwd")" = "$run" ]
+printf 'run=%s\nreport_sha256=%s\nguardian_pid=%s\nshell_pid=%s\nshell_sha256=%s\nguardian_sha256=%s\n' \
+    "$run" "$(sha256sum "$report" | awk '{print $1}')" \
+    "$new_guardian" "$new_shell" "$observed_hash" "$observed_guardian_hash"
+REMOTE
+
+printf 'artifact_size=%s\nartifact_sha256=%s\nguardian_size=%s\nguardian_sha256=%s\nbackground_size=%s\nbackground_sha256=%s\n' \
+    "$artifact_size" "$artifact_hash" "$guardian_size" "$guardian_hash" \
+    "$background_size" "$background_hash"
+"$kindle" state

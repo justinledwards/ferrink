@@ -1,0 +1,15 @@
+# Copy this file outside the repository, replace the placeholder values, and
+# point KINDLE_SSH_CONFIG at the copy. Never commit a real device address, key
+# path, host key, or account configuration.
+
+Host kindle
+    HostName REPLACE_WITH_DEVICE_IP_OR_HOSTNAME
+    User root
+    IdentityFile ~/.ssh/kindle_usbnet
+    IdentitiesOnly yes
+    BatchMode yes
+    ConnectTimeout 8
+    ServerAliveInterval 15
+    ServerAliveCountMax 2
+    StrictHostKeyChecking accept-new
+    LogLevel ERROR

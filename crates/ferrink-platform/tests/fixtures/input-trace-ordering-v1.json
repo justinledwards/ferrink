@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "redaction": {
+    "enabled": true,
+    "policy": "ferrink-characterization-v1",
+    "excluded_categories": [
+      "full_serial_numbers",
+      "network_credentials_and_ssids",
+      "tokens_and_account_data",
+      "ssh_keys",
+      "document_names",
+      "process_command_lines",
+      "key_text"
+    ]
+  },
+  "profile_id": "reference-landscape",
+  "device": {
+    "device": "/dev/input/event0",
+    "name": "cyttsp",
+    "id": {
+      "bus": 0,
+      "vendor": 0,
+      "product": 0,
+      "version": 0
+    },
+    "capabilities": {
+      "abs": "2608000 3",
+      "ev": "b"
+    }
+  },
+  "input_event_abi": {
+    "pointer_width_bits": 32,
+    "libc_timeval_bytes": 8,
+    "libc_input_event_bytes": 16
+  },
+  "transform": {
+    "raw_x": {
+      "minimum": 0,
+      "maximum": 758
+    },
+    "raw_y": {
+      "minimum": 0,
+      "maximum": 1024
+    },
+    "display": {
+      "width": 758,
+      "height": 1024
+    },
+    "swap_xy": false,
+    "invert_x": false,
+    "invert_y": false,
+    "rotation": "upright"
+  },
+  "limits": {
+    "max_duration_millis": 1000,
+    "max_events": 100
+  },
+  "allowed_events": [
+    { "event_type": 0, "code": 0 },
+    { "event_type": 3, "code": 47 },
+    { "event_type": 3, "code": 53 },
+    { "event_type": 3, "code": 54 },
+    { "event_type": 3, "code": 57 }
+  ],
+  "events": [
+    { "offset_micros": 0, "event_type": 3, "code": 47, "value": 0 },
+    { "offset_micros": 10, "event_type": 3, "code": 53, "value": 0 },
+    { "offset_micros": 20, "event_type": 3, "code": 54, "value": 0 },
+    { "offset_micros": 30, "event_type": 3, "code": 57, "value": 7 },
+    { "offset_micros": 40, "event_type": 0, "code": 0, "value": 0 },
+    { "offset_micros": 50, "event_type": 3, "code": 47, "value": 1 },
+    { "offset_micros": 60, "event_type": 3, "code": 53, "value": 300 },
+    { "offset_micros": 70, "event_type": 3, "code": 54, "value": 400 },
+    { "offset_micros": 80, "event_type": 3, "code": 57, "value": 8 },
+    { "offset_micros": 90, "event_type": 0, "code": 0, "value": 0 },
+    { "offset_micros": 100, "event_type": 3, "code": 47, "value": 1 },
+    { "offset_micros": 110, "event_type": 3, "code": 57, "value": -1 },
+    { "offset_micros": 120, "event_type": 0, "code": 0, "value": 0 },
+    { "offset_micros": 130, "event_type": 3, "code": 47, "value": 0 },
+    { "offset_micros": 140, "event_type": 3, "code": 53, "value": 758 },
+    { "offset_micros": 150, "event_type": 3, "code": 54, "value": 1024 },
+    { "offset_micros": 160, "event_type": 0, "code": 0, "value": 0 },
+    { "offset_micros": 170, "event_type": 3, "code": 57, "value": -1 },
+    { "offset_micros": 180, "event_type": 0, "code": 0, "value": 0 }
+  ],
+  "stop_reason": "completed",
+  "warnings": []
+}

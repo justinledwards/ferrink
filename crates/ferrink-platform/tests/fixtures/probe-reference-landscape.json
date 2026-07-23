@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "probe_version": "0.0.1",
+  "captured_at_unix_seconds": 0,
+  "redaction": {
+    "enabled": true,
+    "policy": "synthetic-public-fixture-v1",
+    "excluded_categories": ["all_device_identifiers", "network_data", "credentials", "documents"]
+  },
+  "identity": {
+    "serial_prefix": "DEMO",
+    "serial_redacted": "DEMO…REDACTED",
+    "serial_source": "synthetic",
+    "model_hint": "synthetic-reference-landscape"
+  },
+  "system": {
+    "firmware": [{"source": "synthetic", "value": "reference-landscape 0.0.2-test"}],
+    "kernel_release": "reference-kernel-landscape",
+    "machine": "armv7l",
+    "compiled_architecture": "arm",
+    "available_dynamic_loaders": ["/lib/ld-linux-armhf.so.3"],
+    "userland_float_abi": "soft",
+    "input_event_abi": {"pointer_width_bits": 32, "libc_timeval_bytes": 8, "libc_input_event_bytes": 16},
+    "cpu_fields": {},
+    "executable_abi": {"class": "elf32", "endianness": "little", "machine": 40, "flags": 83887104, "arm_eabi_version": 5, "arm_float_abi": "hard"}
+  },
+  "framebuffers": [{
+    "device": "/dev/fb0", "driver_id": "mxc_epdc_fb", "visible_width": 758, "visible_height": 1024,
+    "virtual_width": 768, "virtual_height": 6144, "x_offset": 0, "y_offset": 0, "line_length": 768,
+    "memory_length": 4718592, "bits_per_pixel": 8, "grayscale": 2, "pixel_layout": "grayscale8", "rotation": 3,
+    "red": {"offset": 0, "length": 8, "msb_right": 0}, "green": {"offset": 0, "length": 8, "msb_right": 0},
+    "blue": {"offset": 0, "length": 8, "msb_right": 0}, "transparency": {"offset": 0, "length": 0, "msb_right": 0}
+  }],
+  "inputs": [{
+    "device": "/dev/input/event0", "name": "cyttsp", "id": {"bus": null, "vendor": null, "product": null, "version": null}, "capabilities": {},
+    "axes": [
+      {"code": 0, "name": "abs_x", "minimum": 0, "maximum": 758, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 1, "name": "abs_y", "minimum": 0, "maximum": 1024, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 47, "name": "abs_mt_slot", "minimum": 0, "maximum": 15, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 53, "name": "abs_mt_position_x", "minimum": 0, "maximum": 758, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 54, "name": "abs_mt_position_y", "minimum": 0, "maximum": 1024, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 57, "name": "abs_mt_tracking_id", "minimum": 0, "maximum": 16, "fuzz": 0, "flat": 0, "resolution": 0}
+    ]
+  }],
+  "power": {"rtcs": [], "suspend": {"state_path": null, "states": [], "mem_sleep_path": null, "mem_sleep_modes": []}, "power_supplies": [], "front_lights": [], "legacy_battery_nodes": [], "hall_sensor_nodes": [], "deep_sleep_nodes": []},
+  "services": {"lipc_getter": null, "lipc_properties": [], "upstart_jobs": [], "sysv_scripts": []},
+  "storage": {"mounts": [], "filesystems": [], "userstore": {"path": "/mnt/us", "exists": false, "mounted": false, "read_only": null}},
+  "processes": [],
+  "warnings": []
+}

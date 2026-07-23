@@ -1,0 +1,1568 @@
+export enum ShellPage {
+    home,
+    sample,
+    settings,
+    maintenance,
+}
+
+export enum ConfirmationKind {
+    none,
+    reboot,
+    power-off,
+}
+
+export enum AlertKind {
+    none,
+    application-unavailable,
+    application-stopped,
+    recovery-countdown,
+}
+
+export struct RegisteredApplication {
+    title: string,
+    detail: string,
+    icon: image,
+    available: bool,
+}
+
+export struct LauncherBackgroundOption {
+    title: string,
+    detail: string,
+    selected: bool,
+}
+
+export global ShellData {
+    in property <ShellPage> page: ShellPage.home;
+    in property <ConfirmationKind> confirmation: ConfirmationKind.none;
+    in property <AlertKind> alert: AlertKind.none;
+    in property <int> recovery-seconds: 0;
+    in property <string> profile-label: "PW1 · 758 × 1024 · host preview";
+    in property <string> status-text: "L0 manual preview · device actions unavailable";
+    in property <string> time-status: "9:41 AM";
+    in property <string> timezone-status: "EDT";
+    in property <int> sample-count: 0;
+    in property <[RegisteredApplication]> applications: [];
+    in property <image> launcher-background;
+    in property <string> launcher-background-label: "Pattern";
+    in property <[LauncherBackgroundOption]> launcher-background-options: [];
+    in property <string> active-application-title: "Application";
+    in property <int> battery-percent: 96;
+    in property <bool> battery-charging: false;
+    in property <string> battery-status: "96%";
+    in property <string> network-status: "Wi-Fi";
+    in property <int> frontlight-level: 11;
+    in property <int> warmth-level: 19;
+    in property <bool> auto-brightness: false;
+    in property <bool> display-controls-available: true;
+    in property <string> bluetooth-status: "Off";
+    in property <string> ssh-status: "On";
+    in property <string> usbnet-status: "On";
+    in property <string> device-adapter-status: "PREVIEW";
+    in property <string> storage-status: "NOT CHECKED";
+    in property <bool> storage-warning: false;
+    in property <bool> literary-clock-available: true;
+    in property <bool> literary-clock-enabled: true;
+    in property <string> literary-clock-interval-label: "Every minute";
+    in property <bool> literary-clock-has-excerpt: true;
+    in property <styled-text> literary-excerpt: @markdown("By **9:41**, the room was quiet enough for another chapter.");
+    in property <string> literary-credit: "— ferrink preview";
+    in property <int> literary-excerpt-font-size: 30;
+}
+
+export global ShellActions {
+    callback return-home();
+    callback launch-application(int);
+    callback open-sample();
+    callback open-settings();
+    callback open-maintenance();
+    callback request-stock();
+    callback request-reboot();
+    callback request-power-off();
+    callback confirm-power-action();
+    callback cancel-power-action();
+    callback dismiss-alert();
+    callback increment-sample();
+    callback adjust-frontlight(int);
+    callback adjust-warmth(int);
+    callback set-frontlight(int);
+    callback set-warmth(int);
+    callback toggle-wifi();
+    callback cycle-literary-clock-interval();
+    callback select-launcher-background(int);
+}
+
+component ActionArea inherits FocusScope {
+    private property <bool> key-pressed-state: false;
+    out property <bool> pressed: action-touch.pressed || root.key-pressed-state;
+    callback activated();
+
+    key-pressed(event) => {
+        if root.enabled && (event.text == " " || event.text == Key.Return) {
+            if !root.key-pressed-state {
+                root.key-pressed-state = true;
+                root.activated();
+            }
+            return accept;
+        }
+        reject
+    }
+
+    key-released(event) => {
+        if event.text == " " || event.text == Key.Return {
+            root.key-pressed-state = false;
+            return accept;
+        }
+        reject
+    }
+
+    action-touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => {
+            root.focus();
+            root.activated();
+        }
+    }
+}
+
+// Slint's software renderer intentionally omits blurred drop shadows. One
+// offset copy gives Home labels a crisp E Ink-safe shadow without making the
+// letterforms look hollow.
+component HaloedApplicationLabel inherits Rectangle {
+    in property <string> text;
+    in property <float> ui-scale: 1;
+    in property <bool> enabled: true;
+    background: transparent;
+
+    Text {
+        x: 1px * root.ui-scale;
+        y: 1px * root.ui-scale;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: #111111;
+        font-size: 24px * root.ui-scale;
+        font-weight: 750;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+        max-lines: 2;
+    }
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: root.enabled ? #f7f6f0 : #d4d2ca;
+        font-size: 24px * root.ui-scale;
+        font-weight: 750;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+        max-lines: 2;
+    }
+}
+
+component HaloedLiteraryExcerpt inherits Rectangle {
+    in property <styled-text> text;
+    in property <float> ui-scale: 1;
+    in property <int> font-size: 30;
+    background: transparent;
+
+    StyledText {
+        x: 1px * root.ui-scale;
+        y: 1px * root.ui-scale;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        default-color: #111111;
+        default-font-size: root.font-size * 1px * root.ui-scale;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        max-lines: 24;
+    }
+
+    StyledText {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        default-color: #f7f6f0;
+        default-font-size: root.font-size * 1px * root.ui-scale;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        max-lines: 24;
+    }
+}
+
+component HaloedCredit inherits Rectangle {
+    in property <string> text;
+    in property <float> ui-scale: 1;
+    background: transparent;
+
+    Text {
+        x: 1px * root.ui-scale;
+        y: 1px * root.ui-scale;
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: #111111;
+        font-size: 17px * root.ui-scale;
+        font-weight: 650;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+        max-lines: 2;
+    }
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        color: #f7f6f0;
+        font-size: 17px * root.ui-scale;
+        font-weight: 650;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+        wrap: word-wrap;
+        overflow: elide;
+        max-lines: 2;
+    }
+}
+
+component ApplicationTile inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <image> icon;
+    in property <float> ui-scale: 1;
+    in property <bool> enabled: true;
+    in property <int> focus-request: 0;
+    callback activated();
+    forward-focus: nav-action;
+
+    changed focus-request => {
+        if root.focus-request > 0 && root.enabled { nav-action.focus(); }
+    }
+    init => {
+        if root.focus-request > 0 && root.enabled { nav-action.focus(); }
+    }
+
+    width: 298px * root.ui-scale;
+    height: 220px * root.ui-scale;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.title + ". " + root.detail;
+    accessible-enabled: root.enabled;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px * root.ui-scale;
+
+        HorizontalLayout {
+            height: 154px * root.ui-scale;
+            spacing: 0px;
+
+            Rectangle { horizontal-stretch: 1; }
+            Rectangle {
+                width: 154px * root.ui-scale;
+                background: nav-action.pressed ? #111111 : (root.enabled ? #f7f6f0 : #dedcd3);
+                border-width: (nav-action.has-focus ? 5px : 2px) * root.ui-scale;
+                border-color: #111111;
+                border-radius: 28px * root.ui-scale;
+
+                Image {
+                    x: 22px * root.ui-scale;
+                    y: 22px * root.ui-scale;
+                    width: parent.width - 44px * root.ui-scale;
+                    height: parent.height - 44px * root.ui-scale;
+                    source: root.icon;
+                    colorize: nav-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    image-fit: contain;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+
+        HaloedApplicationLabel {
+            height: 54px * root.ui-scale;
+            text: root.title;
+            ui-scale: root.ui-scale;
+            enabled: root.enabled;
+        }
+    }
+
+    nav-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.activated(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.activated(); }
+    }
+}
+
+component CompactButton inherits Rectangle {
+    in property <string> label;
+    in property <float> ui-scale: 1;
+    in property <bool> dark: false;
+    in property <bool> enabled: true;
+    in property <int> focus-request: 0;
+    callback activated();
+    forward-focus: button-action;
+
+    changed focus-request => {
+        if root.focus-request > 0 && root.enabled { button-action.focus(); }
+    }
+    init => {
+        if root.focus-request > 0 && root.enabled { button-action.focus(); }
+    }
+
+    height: 60px * root.ui-scale;
+    vertical-stretch: 0;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+
+    control-surface := Rectangle {
+        height: parent.height;
+        background: button-action.pressed ? (root.dark ? #f7f6f0 : #111111) : (root.enabled ? (root.dark ? #111111 : #f7f6f0) : #dedcd3);
+        border-width: (button-action.has-focus ? 4px : 2px) * root.ui-scale;
+        border-color: #111111;
+        border-radius: 8px * root.ui-scale;
+
+        Text {
+            text: root.label;
+            color: button-action.pressed ? (root.dark ? #111111 : white) : (root.enabled ? (root.dark ? white : #111111) : #777773);
+            font-size: 22px * root.ui-scale;
+            font-weight: 700;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    button-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.activated(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.activated(); }
+    }
+}
+
+component QuickAction inherits Rectangle {
+    in property <string> symbol;
+    in property <string> label;
+    in property <string> state;
+    in property <float> ui-scale: 1;
+    in property <bool> enabled: true;
+    callback activated();
+    forward-focus: quick-action;
+
+    height: 88px * root.ui-scale;
+    background: transparent;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+
+    VerticalLayout {
+        padding-top: 5px * root.ui-scale;
+        padding-bottom: 4px * root.ui-scale;
+        spacing: 1px * root.ui-scale;
+
+        Rectangle {
+            height: 42px * root.ui-scale;
+            background: transparent;
+
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                width: 42px * root.ui-scale;
+                background: quick-action.pressed ? #111111 : transparent;
+                border-width: (quick-action.has-focus ? 3px : 2px) * root.ui-scale;
+                border-color: root.enabled ? #111111 : #777773;
+                border-radius: 21px * root.ui-scale;
+
+                Text {
+                    text: root.symbol;
+                    color: quick-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    font-size: 20px * root.ui-scale;
+                    font-weight: 800;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Text {
+            text: root.label;
+            color: root.enabled ? #111111 : #777773;
+            font-size: 16px * root.ui-scale;
+            font-weight: 750;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.state;
+            color: #4b4a46;
+            font-size: 12px * root.ui-scale;
+            horizontal-alignment: center;
+        }
+    }
+
+    quick-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.activated(); }
+    }
+}
+
+component LevelControl inherits Rectangle {
+    in property <string> label;
+    in property <int> value;
+    in property <int> maximum: 24;
+    in property <float> ui-scale: 1;
+    in property <bool> enabled: true;
+    callback decrease();
+    callback increase();
+    callback changed(int);
+    private property <int> drag-value: root.value;
+
+    height: 92px * root.ui-scale;
+    background: transparent;
+
+    VerticalLayout {
+        padding-left: 2px * root.ui-scale;
+        padding-right: 2px * root.ui-scale;
+        padding-top: 4px * root.ui-scale;
+        padding-bottom: 2px * root.ui-scale;
+        spacing: 2px * root.ui-scale;
+
+        HorizontalLayout {
+            Text {
+                text: root.label;
+                color: root.enabled ? #111111 : #4b4a46;
+                font-size: 16px * root.ui-scale;
+                font-weight: 750;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: "\{root.value}";
+                color: #4b4a46;
+                font-size: 16px * root.ui-scale;
+                font-weight: 700;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 4px * root.ui-scale;
+
+            Rectangle {
+                width: 54px * root.ui-scale;
+                background: decrease-action.pressed ? #111111 : transparent;
+                accessible-role: button;
+                accessible-label: "Decrease " + root.label;
+
+                Text {
+                    text: "−";
+                    color: decrease-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    font-size: 28px * root.ui-scale;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                decrease-action := ActionArea {
+                    enabled: root.enabled;
+                    activated => { root.decrease(); }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: transparent;
+
+                Rectangle {
+                    x: 12px * root.ui-scale;
+                    y: (parent.height - self.height) / 2;
+                    width: parent.width - 24px * root.ui-scale;
+                    height: 5px * root.ui-scale;
+                    background: #c9c9c4;
+
+                    Rectangle {
+                        width: parent.width * (slider-touch.pressed ? root.drag-value : root.value) / root.maximum;
+                        background: root.enabled ? #111111 : #777773;
+                    }
+                }
+
+                handle := Rectangle {
+                    width: 22px * root.ui-scale;
+                    height: 34px * root.ui-scale;
+                    x: (parent.width - self.width) * (slider-touch.pressed ? root.drag-value : root.value) / root.maximum;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 5px * root.ui-scale;
+                    border-width: 3px * root.ui-scale;
+                    border-color: root.enabled ? #111111 : #777773;
+                    background: slider-touch.pressed ? #111111 : #f7f6f0;
+                }
+
+                slider-touch := TouchArea {
+                    enabled: root.enabled;
+                    accessible-role: slider;
+                    accessible-label: root.label;
+                    accessible-value: "\{slider-touch.pressed ? root.drag-value : root.value}";
+
+                    pointer-event(event) => {
+                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                            root.drag-value = round(root.maximum * max(0, min(1, self.mouse-x / self.width)));
+                        } else if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                            root.drag-value = round(root.maximum * max(0, min(1, self.mouse-x / self.width)));
+                            root.changed(root.drag-value);
+                        }
+                    }
+
+                    moved => {
+                        if self.enabled && self.pressed {
+                            root.drag-value = round(root.maximum * max(0, min(1, self.mouse-x / self.width)));
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 54px * root.ui-scale;
+                background: increase-action.pressed ? #111111 : transparent;
+                accessible-role: button;
+                accessible-label: "Increase " + root.label;
+
+                Text {
+                    text: "+";
+                    color: increase-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    font-size: 28px * root.ui-scale;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                increase-action := ActionArea {
+                    enabled: root.enabled;
+                    activated => { root.increase(); }
+                }
+            }
+        }
+    }
+}
+
+component BackBar inherits Rectangle {
+    in property <string> title;
+    in property <float> ui-scale: 1;
+    in property <bool> enabled: true;
+    in property <int> focus-request: 0;
+    callback back();
+    forward-focus: back-action;
+
+    changed focus-request => {
+        if root.focus-request > 0 && root.enabled { back-action.focus(); }
+    }
+    init => {
+        if root.focus-request > 0 && root.enabled { back-action.focus(); }
+    }
+
+    height: 67px * root.ui-scale;
+    background: back-action.pressed ? #111111 : #f7f6f0;
+    border-width: (back-action.has-focus ? 4px : 2px) * root.ui-scale;
+    border-color: #111111;
+    accessible-role: button;
+    accessible-label: "Back to applications";
+    accessible-enabled: root.enabled;
+
+    HorizontalLayout {
+        padding-left: 24px * root.ui-scale;
+        padding-right: 24px * root.ui-scale;
+        spacing: 16px * root.ui-scale;
+
+        Text {
+            text: "←";
+            color: back-action.pressed ? white : #111111;
+            font-size: 30px * root.ui-scale;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.title;
+            color: back-action.pressed ? white : #111111;
+            font-size: 24px * root.ui-scale;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+    }
+
+    back-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.back(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.back(); }
+    }
+}
+
+component StatusRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> warning: false;
+    in property <float> ui-scale: 1;
+
+    height: 62px * root.ui-scale;
+    background: root.warning ? #111111 : transparent;
+    border-width: 1px * root.ui-scale;
+    border-color: #111111;
+
+    HorizontalLayout {
+        padding-left: 18px * root.ui-scale;
+        padding-right: 18px * root.ui-scale;
+        spacing: 16px * root.ui-scale;
+
+        Text {
+            text: root.label;
+            color: root.warning ? white : #4b4a46;
+            font-size: 18px * root.ui-scale;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: root.value;
+            color: root.warning ? white : #111111;
+            font-size: 18px * root.ui-scale;
+            font-weight: 800;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+            max-lines: 1;
+        }
+    }
+}
+
+component SettingChoiceRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> enabled: true;
+    in property <float> ui-scale: 1;
+    callback selected();
+    forward-focus: choice-action;
+
+    height: 62px * root.ui-scale;
+    background: choice-action.pressed ? #111111 : (root.enabled ? transparent : #dedcd3);
+    border-width: (choice-action.has-focus ? 4px : 1px) * root.ui-scale;
+    border-color: #111111;
+    accessible-role: button;
+    accessible-label: root.label + ". " + root.value + ". Tap to change.";
+    accessible-enabled: root.enabled;
+
+    HorizontalLayout {
+        padding-left: 18px * root.ui-scale;
+        padding-right: 14px * root.ui-scale;
+        spacing: 16px * root.ui-scale;
+
+        Text {
+            text: root.label;
+            color: choice-action.pressed ? white : (root.enabled ? #4b4a46 : #777773);
+            font-size: 18px * root.ui-scale;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: (!root.enabled ? "Unavailable" : root.value) + "  ›";
+            color: choice-action.pressed ? white : (root.enabled ? #111111 : #777773);
+            font-size: 17px * root.ui-scale;
+            font-weight: 800;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+            overflow: elide;
+            max-lines: 1;
+        }
+    }
+
+    choice-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.selected(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.selected(); }
+    }
+}
+
+component BackgroundChoiceRow inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> selected: false;
+    in property <bool> enabled: true;
+    in property <float> ui-scale: 1;
+    callback chosen();
+    forward-focus: background-action;
+
+    height: 70px * root.ui-scale;
+    background: background-action.pressed ? #111111 : (root.selected ? #d9d7cd : #f7f6f0);
+    border-width: (background-action.has-focus ? 4px : 1px) * root.ui-scale;
+    border-color: #111111;
+    accessible-role: button;
+    accessible-label: root.title + ". " + root.detail + (root.selected ? ". Selected." : ". Tap to select.");
+    accessible-enabled: root.enabled;
+
+    HorizontalLayout {
+        padding-left: 18px * root.ui-scale;
+        padding-right: 18px * root.ui-scale;
+        spacing: 14px * root.ui-scale;
+
+        VerticalLayout {
+            spacing: 0px;
+            padding-top: 8px * root.ui-scale;
+            padding-bottom: 8px * root.ui-scale;
+
+            Text {
+                text: root.title;
+                color: background-action.pressed ? white : #111111;
+                font-size: 20px * root.ui-scale;
+                font-weight: 800;
+                vertical-alignment: center;
+            }
+            Text {
+                text: root.detail;
+                color: background-action.pressed ? white : #4b4a46;
+                font-size: 15px * root.ui-scale;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        Text {
+            text: root.selected ? "SELECTED" : "SELECT";
+            color: background-action.pressed ? white : (root.selected ? #111111 : #4b4a46);
+            font-size: 14px * root.ui-scale;
+            font-weight: 800;
+            letter-spacing: 1px * root.ui-scale;
+            vertical-alignment: center;
+        }
+    }
+
+    background-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.chosen(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.chosen(); }
+    }
+}
+
+export component ShellWindow inherits Window {
+    title: "ferrink";
+    default-font-family: "Inter Variable";
+    preferred-width: 758px;
+    preferred-height: 1024px;
+    min-width: 600px;
+    min-height: 800px;
+    background: #eeece3;
+    in property <float> ui-scale: 1;
+    in-out property <int> focus-generation: 0;
+    in-out property <bool> quick-settings-open: false;
+    in-out property <bool> background-picker-open: false;
+    private property <bool> blocking-modal-visible: ShellData.confirmation != ConfirmationKind.none || ShellData.alert != AlertKind.none;
+
+    private property <bool> modal-visible: root.quick-settings-open || root.blocking-modal-visible;
+
+    public function focus-keyboard-root() {
+        keyboard-scope.focus();
+    }
+
+    keyboard-scope := FocusScope {
+        focus-on-tab-navigation: false;
+        key-pressed(event) => {
+            if event.text == Key.Escape {
+                if root.quick-settings-open {
+                    root.quick-settings-open = false;
+                } else if root.background-picker-open {
+                    root.background-picker-open = false;
+                } else if ShellData.confirmation != ConfirmationKind.none {
+                    ShellActions.cancel-power-action();
+                } else if ShellData.alert == AlertKind.application-unavailable || ShellData.alert == AlertKind.application-stopped {
+                    ShellActions.dismiss-alert();
+                } else if ShellData.alert == AlertKind.recovery-countdown {
+                    // Recovery is fail-safe and cannot be dismissed from the keyboard.
+                } else if ShellData.page != ShellPage.home {
+                    ShellActions.return-home();
+                } else {
+                    return reject;
+                }
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+
+        if ShellData.page == ShellPage.home : top-bar := Rectangle {
+            height: 54px * root.ui-scale;
+            background: #f7f6f0;
+
+            HorizontalLayout {
+                padding-left: 18px * root.ui-scale;
+                padding-right: 18px * root.ui-scale;
+                spacing: 12px * root.ui-scale;
+
+                Text {
+                    text: ShellData.time-status;
+                    color: #111111;
+                    font-size: 17px * root.ui-scale;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { horizontal-stretch: 1; }
+
+                Text {
+                    text: ShellData.network-status;
+                    color: #111111;
+                    font-size: 14px * root.ui-scale;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    text: ShellData.battery-status;
+                    color: #111111;
+                    font-size: 17px * root.ui-scale;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 34px * root.ui-scale;
+                    background: transparent;
+
+                    Rectangle {
+                        y: (parent.height - self.height) / 2;
+                        width: 31px * root.ui-scale;
+                        height: 17px * root.ui-scale;
+                        background: transparent;
+                        border-width: 2px * root.ui-scale;
+                        border-color: #111111;
+                        border-radius: 2px * root.ui-scale;
+
+                        Rectangle {
+                            x: 3px * root.ui-scale;
+                            y: 3px * root.ui-scale;
+                            width: (parent.width - 6px * root.ui-scale) * ShellData.battery-percent / 100;
+                            height: parent.height - 6px * root.ui-scale;
+                            background: #111111;
+                        }
+
+                        Rectangle {
+                            x: parent.width;
+                            y: 5px * root.ui-scale;
+                            width: 3px * root.ui-scale;
+                            height: 7px * root.ui-scale;
+                            background: #111111;
+                        }
+                    }
+                }
+            }
+
+            settings-handle := ActionArea {
+                x: (parent.width - self.width) / 2;
+                y: 0px;
+                width: 150px * root.ui-scale;
+                height: parent.height;
+                enabled: !root.blocking-modal-visible;
+                accessible-role: button;
+                accessible-label: "Quick settings";
+                activated => { root.quick-settings-open = !root.quick-settings-open; }
+
+                Path {
+                    x: 28px * root.ui-scale;
+                    y: 15px * root.ui-scale;
+                    width: 94px * root.ui-scale;
+                    height: 24px * root.ui-scale;
+                    viewbox-width: 100;
+                    viewbox-height: 20;
+                    stroke: #111111;
+                    stroke-width: 5px * root.ui-scale;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+
+                    MoveTo { x: 4; y: root.quick-settings-open ? 16 : 4; }
+                    LineTo { x: 50; y: root.quick-settings-open ? 4 : 16; }
+                    LineTo { x: 96; y: root.quick-settings-open ? 16 : 4; }
+                }
+            }
+        }
+
+        if ShellData.page == ShellPage.home : home-page := Rectangle {
+            vertical-stretch: 1;
+            background: #eeece3;
+
+            Image {
+                width: parent.width;
+                height: parent.height;
+                source: ShellData.launcher-background;
+                image-fit: cover;
+            }
+
+            VerticalLayout {
+                padding-left: 34px * root.ui-scale;
+                padding-right: 34px * root.ui-scale;
+                padding-top: 22px * root.ui-scale;
+                padding-bottom: 24px * root.ui-scale;
+                spacing: 16px * root.ui-scale;
+
+                app-grid := GridLayout {
+                    height: ((ShellData.applications.length + 1) / 2) * 220px * root.ui-scale;
+                    spacing: 16px * root.ui-scale;
+
+                    Row {
+                        for application[index] in ShellData.applications : ApplicationTile {
+                            row: index / 2;
+                            col: mod(index, 2);
+                            title: application.title;
+                            detail: application.detail;
+                            icon: application.icon;
+                            ui-scale: root.ui-scale;
+                            enabled: !root.modal-visible && application.available;
+                            focus-request: index == 0 ? root.focus-generation : 0;
+                            activated => { ShellActions.launch-application(index); }
+                        }
+                    }
+                }
+
+                if ShellData.literary-clock-enabled && ShellData.literary-clock-has-excerpt : literary-clock := Rectangle {
+                    vertical-stretch: 1;
+                    background: transparent;
+
+                    HaloedLiteraryExcerpt {
+                        x: 30px * root.ui-scale;
+                        y: 10px * root.ui-scale;
+                        width: parent.width - 60px * root.ui-scale;
+                        height: parent.height - 90px * root.ui-scale;
+                        text: ShellData.literary-excerpt;
+                        font-size: ShellData.literary-excerpt-font-size;
+                        ui-scale: root.ui-scale;
+                    }
+
+                    HaloedCredit {
+                        x: 30px * root.ui-scale;
+                        y: parent.height - 66px * root.ui-scale;
+                        width: parent.width - 60px * root.ui-scale;
+                        height: 52px * root.ui-scale;
+                        text: ShellData.literary-credit;
+                        ui-scale: root.ui-scale;
+                    }
+                }
+
+                if !ShellData.literary-clock-enabled || !ShellData.literary-clock-has-excerpt : Rectangle {
+                    vertical-stretch: 1;
+                }
+            }
+        }
+
+        if ShellData.page == ShellPage.sample : sample-page := Rectangle {
+            vertical-stretch: 1;
+            background: #eeece3;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                sample-back := BackBar {
+                    title: "Sample app";
+                    ui-scale: root.ui-scale;
+                    enabled: !root.modal-visible;
+                    focus-request: root.focus-generation;
+                    back => { ShellActions.return-home(); }
+                }
+
+                VerticalLayout {
+                    padding-left: 42px * root.ui-scale;
+                    padding-right: 42px * root.ui-scale;
+                    padding-top: 32px * root.ui-scale;
+                    padding-bottom: 32px * root.ui-scale;
+                    spacing: 22px * root.ui-scale;
+
+                    Text {
+                        text: "Ink, measured.";
+                        color: #111111;
+                        font-size: 48px * root.ui-scale;
+                        font-weight: 800;
+                    }
+
+                    Text {
+                        text: "A software-renderer test surface for hierarchy, tone, and real callbacks.";
+                        color: #4b4a46;
+                        font-size: 21px * root.ui-scale;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle {
+                        height: 250px * root.ui-scale;
+                        border-width: 2px * root.ui-scale;
+                        border-color: #111111;
+
+                        HorizontalLayout {
+                            spacing: 0px;
+                            Rectangle { background: white; horizontal-stretch: 1; }
+                            Rectangle { background: #c9c9c4; horizontal-stretch: 1; }
+                            Rectangle { background: #777773; horizontal-stretch: 1; }
+                            Rectangle { background: #111111; horizontal-stretch: 1; }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    Text {
+                        text: "CALLBACK COUNT";
+                        color: #4b4a46;
+                        font-size: 14px * root.ui-scale;
+                        font-weight: 700;
+                        letter-spacing: 2px * root.ui-scale;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "\{ShellData.sample-count}";
+                        color: #111111;
+                        font-size: 68px * root.ui-scale;
+                        font-weight: 800;
+                        horizontal-alignment: center;
+                    }
+
+                    sample-increment := CompactButton {
+                        label: "Run callback";
+                        ui-scale: root.ui-scale;
+                        dark: true;
+                        enabled: !root.modal-visible;
+                        activated => { ShellActions.increment-sample(); }
+                    }
+                }
+            }
+        }
+
+        if ShellData.page == ShellPage.settings && !root.background-picker-open : settings-page := Rectangle {
+            vertical-stretch: 1;
+            background: #eeece3;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                settings-back := BackBar {
+                    title: "Device settings";
+                    ui-scale: root.ui-scale;
+                    enabled: !root.modal-visible;
+                    focus-request: root.focus-generation;
+                    back => { ShellActions.return-home(); }
+                }
+
+                settings-scroll := Flickable {
+                    viewport-width: self.width;
+                    viewport-height: settings-content.height;
+
+                    settings-content := VerticalLayout {
+                        width: settings-scroll.width;
+                        height: 1220px * root.ui-scale;
+                        padding-left: 34px * root.ui-scale;
+                        padding-right: 34px * root.ui-scale;
+                        padding-top: 20px * root.ui-scale;
+                        padding-bottom: 22px * root.ui-scale;
+                        spacing: 8px * root.ui-scale;
+
+                        Text {
+                            text: "Display";
+                            color: #111111;
+                            font-size: 25px * root.ui-scale;
+                            font-weight: 800;
+                        }
+                        StatusRow { label: "Front light"; value: "\{ShellData.frontlight-level} / 24"; ui-scale: root.ui-scale; }
+                        StatusRow { label: "Warmth"; value: "\{ShellData.warmth-level} / 24"; ui-scale: root.ui-scale; }
+                        StatusRow { label: "Auto brightness"; value: ShellData.auto-brightness ? "ON" : "OFF"; ui-scale: root.ui-scale; }
+                        SettingChoiceRow {
+                            label: "Background";
+                            value: ShellData.launcher-background-label;
+                            enabled: !root.modal-visible && ShellData.launcher-background-options.length > 1;
+                            ui-scale: root.ui-scale;
+                            selected => { root.background-picker-open = true; }
+                        }
+                        SettingChoiceRow {
+                            label: "Literary clock";
+                            value: ShellData.literary-clock-interval-label;
+                            enabled: !root.modal-visible && ShellData.literary-clock-available;
+                            ui-scale: root.ui-scale;
+                            selected => { ShellActions.cycle-literary-clock-interval(); }
+                        }
+
+                        Text {
+                            text: "Date & time";
+                            color: #111111;
+                            font-size: 25px * root.ui-scale;
+                            font-weight: 800;
+                        }
+                        StatusRow { label: "Local time"; value: ShellData.time-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "Time zone"; value: ShellData.timezone-status; ui-scale: root.ui-scale; }
+
+                        Text {
+                            text: "Connections";
+                            color: #111111;
+                            font-size: 25px * root.ui-scale;
+                            font-weight: 800;
+                        }
+                        StatusRow { label: "Wi-Fi"; value: ShellData.network-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "Bluetooth"; value: ShellData.bluetooth-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "SSH"; value: ShellData.ssh-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "USB network"; value: ShellData.usbnet-status; ui-scale: root.ui-scale; }
+
+                        Rectangle { vertical-stretch: 1; }
+
+                        HorizontalLayout {
+                            height: 62px * root.ui-scale;
+                            spacing: 8px * root.ui-scale;
+
+                            CompactButton {
+                                horizontal-stretch: 1;
+                                label: "Amazon home";
+                                ui-scale: root.ui-scale;
+                                enabled: !root.modal-visible;
+                                activated => { ShellActions.request-stock(); }
+                            }
+                            CompactButton {
+                                horizontal-stretch: 1;
+                                label: "Restart";
+                                ui-scale: root.ui-scale;
+                                enabled: !root.modal-visible;
+                                activated => { ShellActions.request-reboot(); }
+                            }
+                            CompactButton {
+                                horizontal-stretch: 1;
+                                label: "Power off";
+                                ui-scale: root.ui-scale;
+                                enabled: !root.modal-visible;
+                                activated => { ShellActions.request-power-off(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if ShellData.page == ShellPage.settings && root.background-picker-open : background-picker-page := Rectangle {
+            vertical-stretch: 1;
+            background: #eeece3;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                background-picker-back := BackBar {
+                    title: "Background";
+                    ui-scale: root.ui-scale;
+                    enabled: !root.modal-visible;
+                    focus-request: root.focus-generation;
+                    back => { root.background-picker-open = false; }
+                }
+
+                background-picker-scroll := Flickable {
+                    viewport-width: self.width;
+                    viewport-height: max(self.height, (ShellData.launcher-background-options.length * 78 + 42) * 1px * root.ui-scale);
+
+                    VerticalLayout {
+                        width: background-picker-scroll.width;
+                        height: background-picker-scroll.viewport-height;
+                        padding-left: 34px * root.ui-scale;
+                        padding-right: 34px * root.ui-scale;
+                        padding-top: 20px * root.ui-scale;
+                        padding-bottom: 22px * root.ui-scale;
+                        spacing: 8px * root.ui-scale;
+
+                        for option[index] in ShellData.launcher-background-options : BackgroundChoiceRow {
+                            title: option.title;
+                            detail: option.detail;
+                            selected: option.selected;
+                            enabled: !root.modal-visible;
+                            ui-scale: root.ui-scale;
+                            chosen => { ShellActions.select-launcher-background(index); }
+                        }
+
+                        Rectangle { vertical-stretch: 1; }
+                    }
+                }
+            }
+        }
+
+        if ShellData.page == ShellPage.maintenance : maintenance-page := Rectangle {
+            vertical-stretch: 1;
+            background: #eeece3;
+
+            VerticalLayout {
+                spacing: 0px;
+
+                maintenance-back := BackBar {
+                    title: "Maintenance";
+                    ui-scale: root.ui-scale;
+                    enabled: !root.modal-visible;
+                    focus-request: root.focus-generation;
+                    back => { ShellActions.return-home(); }
+                }
+
+                VerticalLayout {
+                    padding-left: 42px * root.ui-scale;
+                    padding-right: 42px * root.ui-scale;
+                    padding-top: 34px * root.ui-scale;
+                    padding-bottom: 34px * root.ui-scale;
+                    spacing: 0px;
+
+                    Text {
+                        text: "Safety boundary";
+                        color: #111111;
+                        font-size: 42px * root.ui-scale;
+                        font-weight: 800;
+                    }
+
+                    Text {
+                        text: "This build is intentionally unable to control a Kindle.";
+                        color: #4b4a46;
+                        font-size: 20px * root.ui-scale;
+                    }
+
+                    Rectangle { height: 24px * root.ui-scale; }
+
+                    StatusRow { label: "Authority"; value: "L0 / MANUAL"; ui-scale: root.ui-scale; }
+                    StatusRow { label: "Device adapter"; value: ShellData.device-adapter-status; ui-scale: root.ui-scale; }
+                    StatusRow { label: "System commands"; value: "INERT"; ui-scale: root.ui-scale; }
+                    StatusRow { label: "Battery"; value: ShellData.battery-status; ui-scale: root.ui-scale; }
+                    StatusRow { label: "Network"; value: ShellData.network-status; ui-scale: root.ui-scale; }
+                    StatusRow {
+                        label: "Storage";
+                        value: ShellData.storage-status;
+                        warning: ShellData.storage-warning;
+                        ui-scale: root.ui-scale;
+                    }
+                    StatusRow { label: "Preview geometry"; value: ShellData.profile-label; ui-scale: root.ui-scale; }
+
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+        }
+
+        if ShellData.status-text != "" : status-bar := Rectangle {
+            height: 50px * root.ui-scale;
+            background: #d9d7cd;
+            border-width: 2px * root.ui-scale;
+            border-color: #111111;
+
+            HorizontalLayout {
+                padding-left: 26px * root.ui-scale;
+                padding-right: 26px * root.ui-scale;
+
+                Text {
+                    text: ShellData.status-text;
+                    color: #111111;
+                    font-size: 16px * root.ui-scale;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+
+    if root.quick-settings-open : quick-settings-dismiss := TouchArea {
+        x: 0px;
+        y: 54px * root.ui-scale;
+        width: root.width;
+        height: root.height - self.y;
+        z: 20;
+        clicked => { root.quick-settings-open = false; }
+    }
+
+    if root.quick-settings-open : quick-settings-sheet := Rectangle {
+        x: 0px;
+        y: 54px * root.ui-scale;
+        width: root.width;
+        height: 392px * root.ui-scale;
+        z: 30;
+        background: #f7f6f0;
+
+        TouchArea { }
+
+        VerticalLayout {
+            padding-left: 24px * root.ui-scale;
+            padding-right: 24px * root.ui-scale;
+            padding-top: 10px * root.ui-scale;
+            padding-bottom: 8px * root.ui-scale;
+            spacing: 5px * root.ui-scale;
+
+            HorizontalLayout {
+                spacing: 20px * root.ui-scale;
+
+                QuickAction {
+                    horizontal-stretch: 1;
+                    symbol: "W";
+                    label: "Wi-Fi";
+                    state: ShellData.network-status;
+                    ui-scale: root.ui-scale;
+                    activated => { ShellActions.toggle-wifi(); }
+                }
+                QuickAction {
+                    horizontal-stretch: 1;
+                    symbol: "B";
+                    label: "Bluetooth";
+                    state: ShellData.bluetooth-status;
+                    ui-scale: root.ui-scale;
+                    enabled: false;
+                }
+                QuickAction {
+                    horizontal-stretch: 1;
+                    symbol: "⋮";
+                    label: "All settings";
+                    state: "Open";
+                    ui-scale: root.ui-scale;
+                    activated => {
+                        root.quick-settings-open = false;
+                        ShellActions.open-settings();
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 1px * root.ui-scale;
+                background: #c9c9c4;
+            }
+
+            LevelControl {
+                label: "Brightness";
+                value: ShellData.frontlight-level;
+                ui-scale: root.ui-scale;
+                enabled: ShellData.display-controls-available;
+                decrease => { ShellActions.adjust-frontlight(-1); }
+                increase => { ShellActions.adjust-frontlight(1); }
+                changed(value) => { ShellActions.set-frontlight(value); }
+            }
+            LevelControl {
+                label: "Warmth";
+                value: ShellData.warmth-level;
+                ui-scale: root.ui-scale;
+                enabled: ShellData.display-controls-available;
+                decrease => { ShellActions.adjust-warmth(-1); }
+                increase => { ShellActions.adjust-warmth(1); }
+                changed(value) => { ShellActions.set-warmth(value); }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            close-sheet := ActionArea {
+                height: 42px * root.ui-scale;
+                activated => { root.quick-settings-open = false; }
+
+                Path {
+                    x: (parent.width - self.width) / 2;
+                    y: 8px * root.ui-scale;
+                    width: 94px * root.ui-scale;
+                    height: 24px * root.ui-scale;
+                    viewbox-width: 100;
+                    viewbox-height: 20;
+                    stroke: #111111;
+                    stroke-width: 5px * root.ui-scale;
+                    stroke-line-cap: round;
+                    stroke-line-join: round;
+
+                    MoveTo { x: 4; y: 16; }
+                    LineTo { x: 50; y: 4; }
+                    LineTo { x: 96; y: 16; }
+                }
+            }
+        }
+    }
+
+    if ShellData.confirmation != ConfirmationKind.none : confirmation-overlay := Rectangle {
+        background: #d9d7cd;
+
+        VerticalLayout {
+            padding-left: 56px * root.ui-scale;
+            padding-right: 56px * root.ui-scale;
+            padding-top: 90px * root.ui-scale;
+            padding-bottom: 90px * root.ui-scale;
+
+            Rectangle { vertical-stretch: 1; }
+
+            Rectangle {
+                height: 480px * root.ui-scale;
+                background: #f7f6f0;
+                border-width: 4px * root.ui-scale;
+                border-color: #111111;
+
+                VerticalLayout {
+                    padding-left: 38px * root.ui-scale;
+                    padding-right: 38px * root.ui-scale;
+                    padding-top: 34px * root.ui-scale;
+                    padding-bottom: 34px * root.ui-scale;
+                    spacing: 20px * root.ui-scale;
+
+                    Text {
+                        text: "CONFIRM SYSTEM ACTION";
+                        color: #4b4a46;
+                        font-size: 15px * root.ui-scale;
+                        font-weight: 700;
+                        letter-spacing: 2px * root.ui-scale;
+                    }
+
+                    Text {
+                        text: ShellData.confirmation == ConfirmationKind.reboot ? "Reboot device?" : "Power off device?";
+                        color: #111111;
+                        font-size: 43px * root.ui-scale;
+                        font-weight: 800;
+                    }
+
+                    Text {
+                        text: ShellData.confirmation == ConfirmationKind.reboot
+                            ? "Your Kindle will turn off and start again. This may take a minute."
+                            : "Your Kindle will turn off. Use the power button when you want to turn it back on.";
+                        color: #4b4a46;
+                        font-size: 21px * root.ui-scale;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    confirm-button := CompactButton {
+                        label: ShellData.confirmation == ConfirmationKind.reboot ? "Confirm reboot" : "Confirm power off";
+                        ui-scale: root.ui-scale;
+                        dark: true;
+                        activated => { ShellActions.confirm-power-action(); }
+                    }
+
+                    cancel-button := CompactButton {
+                        label: "Cancel";
+                        ui-scale: root.ui-scale;
+                        focus-request: root.focus-generation;
+                        activated => { ShellActions.cancel-power-action(); }
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+
+    if ShellData.alert != AlertKind.none : alert-overlay := Rectangle {
+        background: #d9d7cd;
+
+        VerticalLayout {
+            padding-left: 56px * root.ui-scale;
+            padding-right: 56px * root.ui-scale;
+            padding-top: 72px * root.ui-scale;
+            padding-bottom: 72px * root.ui-scale;
+
+            Rectangle { vertical-stretch: 1; }
+
+            Rectangle {
+                height: (ShellData.alert == AlertKind.recovery-countdown ? 540px : 440px) * root.ui-scale;
+                background: #f7f6f0;
+                border-width: 4px * root.ui-scale;
+                border-color: #111111;
+
+                VerticalLayout {
+                    padding-left: 38px * root.ui-scale;
+                    padding-right: 38px * root.ui-scale;
+                    padding-top: 32px * root.ui-scale;
+                    padding-bottom: 32px * root.ui-scale;
+                    spacing: 16px * root.ui-scale;
+
+                    Text {
+                        text: ShellData.alert == AlertKind.recovery-countdown ? "SAFE RECOVERY" : "APPLICATION STATUS";
+                        color: #4b4a46;
+                        font-size: 15px * root.ui-scale;
+                        font-weight: 700;
+                        letter-spacing: 2px * root.ui-scale;
+                    }
+
+                    Text {
+                        text: ShellData.alert == AlertKind.application-unavailable
+                            ? "App unavailable"
+                            : ShellData.alert == AlertKind.application-stopped
+                                ? "App stopped"
+                                : "Returning to Kindle";
+                        color: #111111;
+                        font-size: 41px * root.ui-scale;
+                        font-weight: 800;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-lines: 2;
+                    }
+
+                    if ShellData.alert != AlertKind.recovery-countdown : Text {
+                        text: ShellData.active-application-title;
+                        color: #111111;
+                        font-size: 23px * root.ui-scale;
+                        font-weight: 700;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-lines: 2;
+                    }
+
+                    Text {
+                        text: ShellData.alert == AlertKind.application-unavailable
+                            ? "This app cannot open right now. Its storage or required service is not ready."
+                            : ShellData.alert == AlertKind.application-stopped
+                                ? "The app closed unexpectedly. ferrink returned safely, and you can choose what to open next."
+                                : "ferrink could not keep the app running. The original Amazon home screen will open automatically.";
+                        color: #4b4a46;
+                        font-size: 20px * root.ui-scale;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        max-lines: 3;
+                    }
+
+                    if ShellData.alert == AlertKind.recovery-countdown : Rectangle {
+                        height: 112px * root.ui-scale;
+                        background: #111111;
+
+                        HorizontalLayout {
+                            padding-left: 22px * root.ui-scale;
+                            padding-right: 22px * root.ui-scale;
+
+                            Text {
+                                text: "\{ShellData.recovery-seconds}";
+                                color: white;
+                                font-size: 64px * root.ui-scale;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            Text {
+                                text: "SECONDS";
+                                color: white;
+                                font-size: 16px * root.ui-scale;
+                                font-weight: 700;
+                                letter-spacing: 2px * root.ui-scale;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    alert-action := CompactButton {
+                        label: ShellData.alert == AlertKind.recovery-countdown ? "Open Kindle now" : "Back to applications";
+                        ui-scale: root.ui-scale;
+                        dark: ShellData.alert == AlertKind.recovery-countdown;
+                        focus-request: root.focus-generation;
+                        activated => {
+                            if ShellData.alert == AlertKind.recovery-countdown {
+                                ShellActions.request-stock();
+                            } else {
+                                ShellActions.dismiss-alert();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+    }
+}

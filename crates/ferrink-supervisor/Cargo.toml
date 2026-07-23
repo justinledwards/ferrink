@@ -1,0 +1,44 @@
+[package]
+name = "ferrink-supervisor"
+description = "Host-testable foreground ownership and stock restoration policy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+linux-kindle-foreground = [
+    "dep:ferrink-platform",
+    "dep:ferrink-platform-kindle",
+    "dep:libc",
+    "ferrink-platform-kindle/linux-stock-repaint",
+]
+koa3-foreground-card = [
+    "linux-kindle-foreground",
+    "dep:ferrink-shell",
+    "dep:serde_json",
+    "dep:slint",
+    "ferrink-platform-kindle/linux-foreground-display",
+]
+koa3-shell-guardian = ["linux-kindle-foreground", "dep:ferrink-manifest"]
+
+[dependencies]
+ferrink-platform = { path = "../ferrink-platform", optional = true }
+ferrink-platform-kindle = { path = "../ferrink-platform-kindle", optional = true }
+ferrink-manifest = { path = "../ferrink-manifest", optional = true }
+ferrink-shell = { path = "../ferrink-shell", optional = true }
+libc = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+slint = { workspace = true, optional = true }
+
+[[bin]]
+name = "ferrink-foreground-card-kindle"
+path = "src/bin/ferrink-foreground-card-kindle.rs"
+required-features = ["koa3-foreground-card"]
+
+[[bin]]
+name = "ferrink-shell-guardian-kindle"
+path = "src/bin/ferrink-shell-guardian-kindle.rs"
+required-features = ["koa3-shell-guardian"]

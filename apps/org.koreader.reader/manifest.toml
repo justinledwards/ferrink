@@ -1,0 +1,24 @@
+manifest_version = 1
+id = "org.koreader.reader"
+name = "KOReader"
+description = "Open your library and continue reading"
+icon = "/mnt/us/ferrink/apps/org.koreader.reader/icon.png"
+spdx_license = "AGPL-3.0-only"
+command = ["/mnt/us/ferrink/apps/org.koreader.reader/launch-kindle.sh"]
+
+[display]
+mode = "framebuffer"
+handoff = "supervisor"
+
+[requirements]
+wifi = false
+stock_services = ["com.lab126.powerd"]
+prevent_suspend = false
+
+[lifecycle]
+startup_timeout_seconds = 20
+exit_timeout_seconds = 10
+restart = "never"
+
+[environment]
+PATH = "/usr/sbin:/usr/bin:/sbin:/bin"

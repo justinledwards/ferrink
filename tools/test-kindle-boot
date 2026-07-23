@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+boot=$repo_dir/packaging/kindle/ferrink-boot
+test_root=$(mktemp -d -t ferrink-boot-test.XXXXXX)
+
+cleanup() {
+    rm -rf -- "$test_root"
+}
+trap cleanup EXIT HUP INT TERM
+
+run_fallback_case() {
+    expected=$1
+    mounts=$2
+    userstore=$3
+    output=$test_root/output
+
+    set +e
+    FERRINK_MOUNTS_FILE=$mounts \
+        FERRINK_USERSTORE_ROOT=$userstore \
+        "$boot" >"$output" 2>&1
+    status=$?
+    set -e
+
+    [ "$status" -eq 75 ] || {
+        printf 'expected fallback status 75, got %s\n' "$status" >&2
+        cat "$output" >&2
+        exit 1
+    }
+    grep -F "$expected" "$output" >/dev/null || {
+        printf 'missing fallback reason: %s\n' "$expected" >&2
+        cat "$output" >&2
+        exit 1
+    }
+}
+
+userstore=$test_root/userstore
+mounts=$test_root/mounts
+mkdir "$userstore"
+: >"$mounts"
+run_fallback_case 'userstore is unavailable' "$mounts" "$userstore"
+
+printf 'fsp %s fuse.fsp rw 0 0\n' "$userstore" >"$mounts"
+: >"$userstore/BOOT_KINDLEOS"
+run_fallback_case 'stock selected by disable sentinel' "$mounts" "$userstore"
+
+rm "$userstore/BOOT_KINDLEOS"
+run_fallback_case 'application catalog is unavailable' "$mounts" "$userstore"
+
+printf '%s\n' 'kindle boot fallback tests passed'

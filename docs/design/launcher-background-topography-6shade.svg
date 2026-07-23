@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="632" height="843" viewBox="0 0 632 843">
+  <title>Ferrink six-tone topography background</title>
+  <desc>Large, flat, dark grayscale bands designed for white text on an E Ink display.</desc>
+
+  <rect width="632" height="843" fill="#3e3e3e"/>
+
+  <!-- Each spline closes outside the viewport, so only clean curved edges are visible. -->
+  <path fill="#343434" d="M-50 270 C70 180 150 290 260 200 C360 120 440 180 682 20 L682 893 L-50 893 Z"/>
+  <path fill="#2c2c2c" d="M-50 390 C90 290 160 400 280 300 C390 210 480 280 682 130 L682 893 L-50 893 Z"/>
+  <path fill="#242424" d="M-50 510 C100 400 180 520 300 420 C420 320 500 390 682 250 L682 893 L-50 893 Z"/>
+  <path fill="#1c1c1c" d="M-50 635 C115 515 195 640 320 535 C445 430 525 510 682 375 L682 893 L-50 893 Z"/>
+  <path fill="#141414" d="M-50 765 C125 635 215 765 340 655 C465 545 545 635 682 505 L682 893 L-50 893 Z"/>
+</svg>

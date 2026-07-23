@@ -1,0 +1,38 @@
+schema_version = 1
+id = "reference-landscape"
+display_name = "Synthetic landscape reference"
+review_status = "observed_foreground"
+
+[identity]
+serial_prefixes = ["DEMO"]
+firmware_versions = ["0.0.2-test"]
+
+[display]
+width = 758
+height = 1024
+bits_per_pixel = 8
+pixel_layout = "grayscale8"
+rotation = 3
+
+[requirements]
+multitouch_axes = true
+
+[runtime.framebuffer]
+driver_id = "mxc_epdc_fb"
+
+[runtime.touch]
+name = "cyttsp"
+x_axis_code = 53
+y_axis_code = 54
+swap_xy = false
+invert_x = false
+invert_y = false
+rotation = "upright"
+
+[evidence]
+level = "observed"
+source = "synthetic public test fixture; not a device capture or support claim"
+notes = [
+    "The values exercise profile parsing and runtime resolution only.",
+    "Do not use this file to operate a physical device.",
+]

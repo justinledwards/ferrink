@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Open book">
+  <g fill="none" stroke="#111111" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 42c30-8 55-2 76 18v104c-21-20-46-26-76-18z"/>
+    <path d="M172 42c-30-8-55-2-76 18v104c21-20 46-26 76-18z"/>
+    <path d="M40 72c14-2 27 1 38 9"/>
+    <path d="M40 98c14-2 27 1 38 9"/>
+    <path d="M114 81c11-8 24-11 38-9"/>
+    <path d="M114 107c11-8 24-11 38-9"/>
+  </g>
+</svg>

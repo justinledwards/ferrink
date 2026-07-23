@@ -1,0 +1,11 @@
+[package]
+name = "ferrink-characterize-display"
+description = "Single-purpose interactive ferrink KOA3 display characterization adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ferrink-platform = { path = "../ferrink-platform" }
+libc.workspace = true

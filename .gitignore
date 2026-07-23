@@ -1,0 +1,29 @@
+/target/
+*.log
+*.trace
+*.img
+*.bin
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Per-device connection material must remain local. Start from the tracked
+# example, then keep the real OpenSSH configuration outside this repository.
+tools/kindle-ssh.config
+*.pem
+*.key
+*.p12
+*.pfx
+*.secrets
+.env
+.env.*
+!*.env.example
+
+# Credentials for launched applications belong in root-owned local files.
+apps/io.home-assistant.dashboard/*.env
+
+# Device captures may contain identifiers or local configuration. Promote only
+# sanitized fixtures into the repository.
+/lab/
+/captures/
+/docs/evidence/

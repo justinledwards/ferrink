@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "redaction": {
+    "enabled": true,
+    "policy": "ferrink-characterization-v1",
+    "excluded_categories": [
+      "full_serial_numbers",
+      "network_credentials_and_ssids",
+      "tokens_and_account_data",
+      "ssh_keys",
+      "document_names",
+      "process_command_lines",
+      "key_text"
+    ]
+  },
+  "profile_id": "synthetic-display-trace",
+  "framebuffer": {
+    "device": "/dev/fb0",
+    "driver_id": "mxc_epdc_fb",
+    "visible": {
+      "width": 1264,
+      "height": 1680
+    },
+    "virtual_extent": {
+      "width": 1280,
+      "height": 3584
+    },
+    "line_length": 1280,
+    "memory_length": 4587520,
+    "bits_per_pixel": 8,
+    "pixel_layout": "grayscale8",
+    "rotation": "upright"
+  },
+  "preflight": "not_performed",
+  "attempts": [
+    {
+      "plan": {
+        "open_mode": "read_only",
+        "memory_access": "none",
+        "region": {
+          "x": 0,
+          "y": 0,
+          "width": 64,
+          "height": 64
+        },
+        "abi": {
+          "kind": "zelda88",
+          "request_size": 88
+        },
+        "request_ioctl": 1079526958,
+        "waveform_mode": 0,
+        "update_mode": 0,
+        "temperature": 4096,
+        "flags": 0,
+        "dither_mode": 0,
+        "quant_bit": 0,
+        "alternate_buffer_zeroed": true,
+        "histogram_modes": [0, 0],
+        "timestamps": [0, 0],
+        "marker": 1,
+        "wait": {
+          "timeout_millis": 1000
+        }
+      },
+      "submission": "submitted",
+      "completion": "completed",
+      "observation": "not_observed"
+    }
+  ],
+  "post_run_stock_health": "not_checked",
+  "warnings": []
+}

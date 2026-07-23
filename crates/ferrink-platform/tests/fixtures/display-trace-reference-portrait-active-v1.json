@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "redaction": {
+    "enabled": true,
+    "policy": "ferrink-characterization-v1",
+    "excluded_categories": [
+      "full_serial_numbers",
+      "network_credentials_and_ssids",
+      "tokens_and_account_data",
+      "ssh_keys",
+      "document_names",
+      "process_command_lines",
+      "key_text"
+    ]
+  },
+  "profile_id": "reference-portrait",
+  "framebuffer": {
+    "device": "/dev/fb0",
+    "driver_id": "mxc_epdc_fb",
+    "visible": {
+      "width": 1264,
+      "height": 1680
+    },
+    "virtual_extent": {
+      "width": 1280,
+      "height": 3584
+    },
+    "line_length": 1280,
+    "memory_length": 4587520,
+    "bits_per_pixel": 8,
+    "pixel_layout": "grayscale8",
+    "rotation": "upright"
+  },
+  "preflight": {
+    "confirmed": {
+      "operator_present": true,
+      "stock_ui_healthy": true,
+      "maintenance_connection_healthy": true,
+      "power_adequate_and_awake": true,
+      "no_transition_or_update": true,
+      "output_ready": true,
+      "fresh_passive_report": true
+    }
+  },
+  "attempts": [
+    {
+      "plan": {
+        "open_mode": "read_only",
+        "memory_access": "none",
+        "region": {
+          "x": 600,
+          "y": 808,
+          "width": 64,
+          "height": 64
+        },
+        "abi": {
+          "kind": "zelda88",
+          "request_size": 88
+        },
+        "request_ioctl": 1079526958,
+        "waveform_mode": 257,
+        "update_mode": 0,
+        "temperature": 4096,
+        "flags": 0,
+        "dither_mode": 0,
+        "quant_bit": 0,
+        "alternate_buffer_zeroed": true,
+        "histogram_modes": [
+          0,
+          0
+        ],
+        "timestamps": [
+          0,
+          0
+        ],
+        "marker": 1179320321,
+        "wait": null
+      },
+      "submission": "submitted",
+      "completion": null,
+      "observation": "uncertain"
+    }
+  ],
+  "post_run_stock_health": "healthy",
+  "warnings": []
+}

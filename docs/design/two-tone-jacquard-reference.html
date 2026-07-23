@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Two-Tone Jacquard Pattern Reference</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #202226; }
+    canvas { display: block; width: 100%; height: 100%; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <script type="module">
+    const canvas = document.querySelector("#canvas");
+    const context = canvas.getContext("2d", { alpha: false });
+    const TAU = Math.PI * 2;
+    const DARK = [31, 33, 37];
+    const LIGHT = [43, 46, 51];
+    const PERIOD = 150;
+    const BEND = 0.42;
+    const THRESHOLD = -0.12;
+    const BAYER_8 = [
+      [ 0, 48, 12, 60,  3, 51, 15, 63],
+      [32, 16, 44, 28, 35, 19, 47, 31],
+      [ 8, 56,  4, 52, 11, 59,  7, 55],
+      [40, 24, 36, 20, 43, 27, 39, 23],
+      [ 2, 50, 14, 62,  1, 49, 13, 61],
+      [34, 18, 46, 30, 33, 17, 45, 29],
+      [10, 58,  6, 54,  9, 57,  5, 53],
+      [42, 26, 38, 22, 41, 25, 37, 21]
+    ];
+
+    const patternField = (x, y) => {
+      const u = TAU * x / PERIOD;
+      const v = TAU * y / PERIOD;
+      const horizontal = Math.cos(u + BEND * Math.sin(v * 2));
+      const vertical = Math.cos(v - BEND * Math.sin(u * 2));
+      const woven = horizontal * vertical;
+      const rounded = 0.28 * (Math.cos(u * 2) + Math.cos(v * 2));
+      const diagonal = -0.10 * Math.cos((u - v) * 3);
+      return woven + rounded + diagonal;
+    };
+
+    const coverageAt = (x, y, scale) => {
+      const offsets = [[0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]];
+      let coverage = 0;
+      for (const [offsetX, offsetY] of offsets) {
+        if (patternField((x + offsetX) / scale, (y + offsetY) / scale) > THRESHOLD) {
+          coverage += 0.25;
+        }
+      }
+      return coverage;
+    };
+
+    const render = () => {
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.ceil(window.innerWidth * pixelRatio);
+      const height = Math.ceil(window.innerHeight * pixelRatio);
+      canvas.width = width;
+      canvas.height = height;
+      const image = context.createImageData(width, height);
+      const pixels = image.data;
+
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const coverage = coverageAt(x, y, pixelRatio);
+          const ditherThreshold = (BAYER_8[y & 7][x & 7] + 0.5) / 64;
+          const color = coverage > ditherThreshold ? LIGHT : DARK;
+          const index = (y * width + x) * 4;
+          pixels[index] = color[0];
+          pixels[index + 1] = color[1];
+          pixels[index + 2] = color[2];
+          pixels[index + 3] = 255;
+        }
+      }
+      context.putImageData(image, 0, 0);
+    };
+
+    let resizeTimer;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(render, 80);
+    });
+    render();
+  </script>
+</body>
+</html>

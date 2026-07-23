@@ -1,0 +1,53 @@
+[package]
+name = "ferrink-shell"
+description = "Foreground-only ferrink reference shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+host-preview = ["slint/backend-winit"]
+dev-tools = ["host-preview", "slint/mcp"]
+kindle-runtime = [
+    "dep:ferrink-platform",
+    "dep:ferrink-platform-kindle",
+    "dep:libc",
+    "ferrink-platform-kindle/linux-foreground-display",
+    "ferrink-platform-kindle/linux-input-grab-card",
+]
+
+[dependencies]
+# Slint reaches both crates transitively. Re-declaring them without link-time
+# Fontconfig defaults keeps ARM musl builds self-contained. Every platform
+# registers the bundled shell font before its first render.
+csv = "1.4.0"
+damascene-fonts-inter = "=0.1.0"
+ferrink-manifest = { path = "../ferrink-manifest" }
+ferrink-platform = { path = "../ferrink-platform", optional = true }
+ferrink-platform-kindle = { path = "../ferrink-platform-kindle", optional = true }
+fontdb = { version = "0.23", default-features = false, features = ["fs", "memmap", "std"] }
+fontique = { version = "0.11", default-features = false, features = ["fontconfig-dlopen", "std"] }
+libc = { workspace = true, optional = true }
+png = "0.18"
+slint.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
+
+[[bin]]
+name = "ferrink-shell"
+path = "src/main.rs"
+required-features = ["host-preview"]
+
+[[bin]]
+name = "ferrink-shell-kindle"
+path = "src/bin/ferrink-shell-kindle.rs"
+required-features = ["kindle-runtime"]
+
+[[test]]
+name = "kindle_pointer"
+path = "tests/kindle_pointer.rs"
+required-features = ["kindle-runtime"]

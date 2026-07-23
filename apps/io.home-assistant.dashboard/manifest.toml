@@ -1,0 +1,24 @@
+manifest_version = 1
+id = "io.home-assistant.dashboard"
+name = "Home Assistant"
+description = "Control your home from the Kindle dashboard"
+icon = "/mnt/us/ferrink/apps/io.home-assistant.dashboard/icon.png"
+spdx_license = "GPL-3.0-only"
+command = ["/mnt/us/ferrink/apps/io.home-assistant.dashboard/launch-kindle.sh"]
+
+[display]
+mode = "framebuffer"
+handoff = "supervisor"
+
+[requirements]
+wifi = true
+stock_services = ["com.lab126.powerd", "com.lab126.wifid"]
+prevent_suspend = true
+
+[lifecycle]
+startup_timeout_seconds = 20
+exit_timeout_seconds = 10
+restart = "never"
+
+[environment]
+PATH = "/usr/sbin:/usr/bin:/sbin:/bin"

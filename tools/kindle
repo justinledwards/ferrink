@@ -1,0 +1,190 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+ssh_config=${KINDLE_SSH_CONFIG:-}
+kindle_target=${KINDLE_TARGET:-reader}
+touch_device=${KINDLE_TOUCH_DEVICE:-}
+evemu_event=${KINDLE_EVEMU_EVENT:-}
+
+usage() {
+    cat <<'EOF'
+usage: tools/kindle COMMAND [ARGS...]
+
+Commands:
+  ping                         verify SSH reachability
+  state                        print a compact device/process summary
+  run PROGRAM [ARG...]         run a remote command with literal arguments
+  script [ARG...]              run a remote stdin script with literal arguments
+  shell 'COMMAND ...'          run an intentional remote shell expression
+  shot [LABEL]                 save a postprocessed screenshot under target/
+  tap X Y [HOLD_MS]            send one Protocol B tap (default: 60 ms)
+  gc16                         refresh the current framebuffer with full GC16
+  push LOCAL REMOTE            copy a file or directory to the Kindle
+  pull REMOTE LOCAL            copy a file or directory from the Kindle
+  rsync SOURCE... DEST         rsync with Kindle userstore-safe metadata flags
+
+Environment:
+  KINDLE_SSH_CONFIG            alternate OpenSSH configuration
+  KINDLE_TARGET                target alias (default: reader)
+  KINDLE_TOUCH_DEVICE          local touch-event path for `tap`
+  KINDLE_EVEMU_EVENT           evemu-event path for `tap`
+EOF
+}
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 2
+}
+
+require_ssh_config() {
+    [ -n "$ssh_config" ] \
+        || die 'set KINDLE_SSH_CONFIG to a local OpenSSH configuration (see tools/kindle-ssh.config.example)'
+    [ -f "$ssh_config" ] \
+        || die "KINDLE_SSH_CONFIG is not a regular file: $ssh_config"
+}
+
+quote_remote_arg() {
+    escaped=$(printf '%s' "$1" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "$escaped"
+}
+
+remote_run() {
+    require_ssh_config
+    [ "$#" -gt 0 ] || die "run requires a program"
+    remote_command=
+    for remote_arg do
+        quoted_arg=$(quote_remote_arg "$remote_arg")
+        if [ -z "$remote_command" ]; then
+            remote_command=$quoted_arg
+        else
+            remote_command="$remote_command $quoted_arg"
+        fi
+    done
+    ssh -T -F "$ssh_config" "$kindle_target" "$remote_command"
+}
+
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+
+case "$command" in
+    help|-h|--help)
+        usage
+        ;;
+    ping)
+        [ "$#" -eq 0 ] || die "ping takes no arguments"
+        remote_run printf 'reachable\n'
+        ;;
+    state)
+        [ "$#" -eq 0 ] || die "state takes no arguments"
+        remote_run sh -s <<'REMOTE'
+sleep_inhibitor=$(lipc-get-prop com.lab126.powerd preventScreenSaver 2>/dev/null) || sleep_inhibitor=?
+printf 'sleep_inhibitor=%s' "$sleep_inhibitor"
+for item in \
+    awesome:awesome \
+    cvm:cvm \
+    guardian:ferrink-shell-g \
+    shell:ferrink-shell-k \
+    reader:reader.lua
+do
+    label=${item%%:*}
+    name=${item#*:}
+    pids=$(pgrep "$name" 2>/dev/null | tr '\n' ',') || true
+    pids=${pids%,}
+    printf '\n%s=%s' "$label" "$pids"
+done
+printf '\n'
+REMOTE
+        ;;
+    run)
+        remote_run "$@"
+        ;;
+    script)
+        remote_run sh -s -- "$@"
+        ;;
+    shell)
+        [ "$#" -eq 1 ] || die "shell requires one quoted command expression"
+        require_ssh_config
+        ssh -T -F "$ssh_config" "$kindle_target" "$1"
+        ;;
+    shot)
+        [ "$#" -le 1 ] || die "shot accepts at most one label"
+        label=${1:-kindle}
+        safe_label=$(printf '%s' "$label" | tr -c 'A-Za-z0-9._-' '-')
+        [ -n "$safe_label" ] || safe_label=kindle
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        output_dir="$repo_dir/target/device-evidence"
+        output="$output_dir/$safe_label-$stamp.png"
+        partial="$output.part"
+        remote_output="/tmp/ferrink-shot-$stamp-$$.png"
+        mkdir -p "$output_dir"
+        if remote_run sh -s -- "$remote_output" >"$partial" <<'REMOTE'
+set -eu
+remote_output=$1
+trap 'rm -f "$remote_output"' EXIT
+trap 'exit 1' HUP INT TERM
+umask 077
+/usr/sbin/screenshot -f "$remote_output" >/dev/null 2>&1
+test -s "$remote_output"
+cat "$remote_output"
+REMOTE
+        then
+            mv "$partial" "$output"
+            printf '%s\n' "$output"
+        else
+            rm -f "$partial"
+            exit 1
+        fi
+        ;;
+    tap)
+        [ "$#" -eq 2 ] || [ "$#" -eq 3 ] || die "tap requires X Y [HOLD_MS]"
+        [ -n "$touch_device" ] || die 'set KINDLE_TOUCH_DEVICE before using tap'
+        [ -n "$evemu_event" ] || die 'set KINDLE_EVEMU_EVENT before using tap'
+        case "$1:$2:${3:-60}" in
+            *[!0-9:]*|:*|*::*|*:)
+                die "tap coordinates and duration must be non-negative integers"
+                ;;
+        esac
+        remote_run sh -s -- \
+            "$evemu_event" "$touch_device" "$1" "$2" "${3:-60}" <<'REMOTE'
+set -eu
+evemu_event=$1
+touch_device=$2
+x=$3
+y=$4
+hold_ms=$5
+tracking_id=$(( $$ % 65535 ))
+
+"$evemu_event" "$touch_device" --type 3 --code 47 --value 0
+"$evemu_event" "$touch_device" --type 3 --code 57 --value "$tracking_id"
+"$evemu_event" "$touch_device" --type 3 --code 53 --value "$x"
+"$evemu_event" --sync "$touch_device" --type 3 --code 54 --value "$y"
+usleep $((hold_ms * 1000))
+"$evemu_event" --sync "$touch_device" --type 3 --code 57 --value -1
+REMOTE
+        ;;
+    gc16)
+        [ "$#" -eq 0 ] || die "gc16 takes no arguments"
+        remote_run /usr/bin/fbink -q -w -W GC16 -s
+        ;;
+    push)
+        [ "$#" -eq 2 ] || die "push requires LOCAL REMOTE"
+        require_ssh_config
+        scp -O -F "$ssh_config" -r -- "$1" "$kindle_target:$2"
+        ;;
+    pull)
+        [ "$#" -eq 2 ] || die "pull requires REMOTE LOCAL"
+        require_ssh_config
+        scp -O -F "$ssh_config" -r -- "$kindle_target:$1" "$2"
+        ;;
+    rsync)
+        [ "$#" -ge 2 ] || die "rsync requires SOURCE... DEST"
+        require_ssh_config
+        rsync --archive --no-owner --no-group --no-perms --omit-dir-times \
+            -e "ssh -T -F $ssh_config" "$@"
+        ;;
+    *)
+        die "unknown command: $command (try: tools/kindle help)"
+        ;;
+esac
