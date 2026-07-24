@@ -2,35 +2,9 @@
 -- late user-patch interface. Later choices made in KOReader remain authoritative.
 
 local initialization_key = "ferrink_startup_initialized_v1"
-local focus_initialization_key = "ferrink_focus_font_initialized_v1"
+local typography_migration_key = "ferrink_typography_migrated_v2"
 local profiles_initialization_key = "ferrink_focus_profiles_initialized_v1"
-local focus_font = "Fast Atkinson Hyperlegible"
-local normal_font = "Noto Serif"
-local focus_font_dir = "/mnt/us/koreader/fonts/ferrink-fast-atkinson"
-local focus_font_files = {
-    "Fast_Atkinson_Regular.otf",
-    "Fast_Atkinson_Bold.otf",
-    "Fast_Atkinson_Italic.otf",
-    "Fast_Atkinson_BoldItalic.otf",
-}
-
-local function is_file(path)
-    local descriptor = io.open(path, "rb")
-    if not descriptor then
-        return false
-    end
-    descriptor:close()
-    return true
-end
-
-local function focus_font_is_complete()
-    for _, filename in ipairs(focus_font_files) do
-        if not is_file(focus_font_dir .. "/" .. filename) then
-            return false
-        end
-    end
-    return true
-end
+local reading_font = "Noto Serif"
 
 local function install_focus_profiles()
     if G_reader_settings:isTrue(profiles_initialization_key) then
@@ -48,7 +22,7 @@ local function install_focus_profiles()
                 name = "Focus reading",
                 order = { "set_font", "font_kerning", "embedded_fonts" },
             },
-            set_font = focus_font,
+            set_font = reading_font,
             font_kerning = 3,
             embedded_fonts = false,
         }
@@ -61,7 +35,7 @@ local function install_focus_profiles()
                 name = "Normal reading",
                 order = { "set_font", "font_kerning", "embedded_fonts" },
             },
-            set_font = normal_font,
+            set_font = reading_font,
             font_kerning = 3,
             embedded_fonts = true,
         }
@@ -72,6 +46,32 @@ local function install_focus_profiles()
         profiles:flush()
     end
     G_reader_settings:makeTrue(profiles_initialization_key)
+    return true
+end
+
+local function migrate_typography()
+    if G_reader_settings:isTrue(typography_migration_key) then
+        return false
+    end
+
+    G_reader_settings:saveSetting("cre_font", reading_font)
+    G_reader_settings:saveSetting("copt_font_kerning", 3)
+    G_reader_settings:saveSetting("copt_embedded_fonts", 0)
+    G_reader_settings:delSetting("cre_font_family_ignore_font_names")
+
+    local DataStorage = require("datastorage")
+    local LuaSettings = require("luasettings")
+    local profiles = LuaSettings:open(DataStorage:getSettingsDir() .. "/profiles.lua")
+    for _, profile_name in ipairs({ "Focus reading", "Normal reading" }) do
+        local profile = profiles.data[profile_name]
+        if profile then
+            profile.set_font = reading_font
+            profile.embedded_fonts = false
+        end
+    end
+    profiles:flush()
+
+    G_reader_settings:makeTrue(typography_migration_key)
     return true
 end
 
@@ -89,17 +89,10 @@ if not G_reader_settings:isTrue(initialization_key) then
     reader_settings_changed = true
 end
 
--- Fast Atkinson performs its prefix emphasis through OpenType contextual
--- alternates. KOReader's "best" kerning mode selects full HarfBuzz shaping,
--- which is required for those substitutions. Apply this once only; later font
--- and typesetting choices made by the reader remain authoritative.
-local focus_font_available = focus_font_is_complete()
-if focus_font_available and not G_reader_settings:isTrue(focus_initialization_key) then
-    G_reader_settings:saveSetting("cre_font", focus_font)
-    G_reader_settings:saveSetting("copt_font_kerning", 3)
-    G_reader_settings:saveSetting("copt_embedded_fonts", 0)
-    G_reader_settings:makeTrue("cre_font_family_ignore_font_names")
-    G_reader_settings:makeTrue(focus_initialization_key)
+-- Use the conventional Noto family for ordinary, comfortable reading. Fast
+-- Atkinson remains installed as an opt-in local choice, but its deliberate
+-- prefix emphasis is not a good default for headings, quotes, or long books.
+if migrate_typography() then
     reader_settings_changed = true
 end
 
