@@ -181,6 +181,7 @@ impl ShellDevicePort for KindleShellDevicePort {
             ShellDeviceCommand::SetWarmth(value) => {
                 set_light("currentAmberLevel", value, "warm-light")?;
             }
+            ShellDeviceCommand::ToggleAutoBrightness => toggle_auto_brightness()?,
             ShellDeviceCommand::ToggleWifi => toggle_wifi()?,
             ShellDeviceCommand::CycleLiteraryClockInterval => {
                 if self.literary_corpus.is_none() {
@@ -448,6 +449,16 @@ fn set_light(
         property,
         value.to_string().as_str(),
         operation,
+    )
+}
+
+fn toggle_auto_brightness() -> Result<(), KindleShellDeviceError> {
+    let enabled = read_bool("com.lab126.powerd", "flAuto", "read automatic brightness")?;
+    set_property(
+        "com.lab126.powerd",
+        "flAuto",
+        if enabled { "0" } else { "1" },
+        "toggle automatic brightness",
     )
 }
 

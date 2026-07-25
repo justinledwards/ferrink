@@ -5,9 +5,9 @@ use ferrink_platform::{
     ResolvedRuntimeDevice, TouchTracker,
 };
 
-const KOA3_REPORT: &str = include_str!("fixtures/probe-reference-portrait.json");
-const PW1_REPORT: &str = include_str!("fixtures/probe-reference-landscape.json");
-const KOA3_PROFILE: &str = include_str!("../../../device-profiles/reference-portrait.toml");
+const PORTRAIT_REPORT: &str = include_str!("fixtures/probe-reference-portrait.json");
+const LANDSCAPE_REPORT: &str = include_str!("fixtures/probe-reference-landscape.json");
+const PORTRAIT_PROFILE: &str = include_str!("../../../device-profiles/reference-portrait.toml");
 
 fn decoder_from_report(report: &str) -> InputEventDecoder {
     let report = ProbeReport::from_json(report).unwrap();
@@ -22,21 +22,21 @@ fn decoder_from_report(report: &str) -> InputEventDecoder {
 }
 
 #[test]
-fn exact_koa3_fixture_selects_the_reviewed_sixteen_byte_input_event_layout() {
-    let decoder = decoder_from_report(KOA3_REPORT);
+fn portrait_fixture_selects_the_reviewed_sixteen_byte_input_event_layout() {
+    let decoder = decoder_from_report(PORTRAIT_REPORT);
     assert_eq!(decoder.record_bytes(), 16);
 }
 
 #[test]
-fn exact_pw1_fixture_selects_the_reviewed_sixteen_byte_input_event_layout() {
-    let decoder = decoder_from_report(PW1_REPORT);
+fn landscape_fixture_selects_the_reviewed_sixteen_byte_input_event_layout() {
+    let decoder = decoder_from_report(LANDSCAPE_REPORT);
     assert_eq!(decoder.record_bytes(), 16);
 }
 
 #[test]
-fn exact_koa3_decoded_records_feed_the_incremental_touch_tracker() {
-    let profile = DeviceProfile::from_toml(KOA3_PROFILE).unwrap();
-    let report = ProbeReport::from_json(KOA3_REPORT).unwrap();
+fn portrait_decoded_records_feed_the_incremental_touch_tracker() {
+    let profile = DeviceProfile::from_toml(PORTRAIT_PROFILE).unwrap();
+    let report = ProbeReport::from_json(PORTRAIT_REPORT).unwrap();
     let device = ResolvedRuntimeDevice::resolve(&profile, &report).unwrap();
     let mut decoder = InputEventDecoder::try_new(
         device.input_event_abi(),

@@ -155,7 +155,8 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
 
     const MAX_INPUT_FILE_BYTES: u64 = 1_048_576;
     const MAX_ICON_FILE_BYTES: u64 = 1_048_576;
-    const POLL_INTERVAL: Duration = Duration::from_millis(25);
+    const BOUNDED_POLL_INTERVAL: Duration = Duration::from_millis(25);
+    const SUPERVISION_POLL_INTERVAL: Duration = Duration::from_secs(1);
     const TERMINATION_DEADLINE: Duration = Duration::from_secs(5);
     const READINESS_DEADLINE: Duration = Duration::from_secs(10);
     const STABLE_SUPERVISION: Duration = Duration::from_secs(2 * 60);
@@ -176,6 +177,21 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     }
 
     impl ActiveForegroundLease {
+        fn set_suspend_inhibited(
+            &mut self,
+            system: &mut LinuxKindleForegroundSystem,
+            inhibit: bool,
+        ) -> Result<(), String> {
+            match self {
+                Self::StockRunning(lease) => lease
+                    .set_suspend_inhibited(system, inhibit)
+                    .map_err(|error| format!("stock-running suspend policy failed: {error:?}")),
+                Self::StockStarting(lease) => lease
+                    .set_suspend_inhibited(system, inhibit)
+                    .map_err(|error| format!("stock-starting suspend policy failed: {error:?}")),
+            }
+        }
+
         fn restore(self, system: &mut LinuxKindleForegroundSystem) -> Result<(), String> {
             match self {
                 Self::StockRunning(lease) => lease
@@ -399,7 +415,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     let _ = self.terminate_bounded();
                     return Err(GuardianDisposition::ReadinessTimedOut);
                 }
-                std::thread::sleep(POLL_INTERVAL);
+                std::thread::sleep(BOUNDED_POLL_INTERVAL);
             }
         }
 
@@ -410,7 +426,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                 if self.poll()?.is_some() {
                     return Ok(false);
                 }
-                std::thread::sleep(POLL_INTERVAL);
+                std::thread::sleep(BOUNDED_POLL_INTERVAL);
             }
 
             self.signal_group(libc::SIGKILL)?;
@@ -527,7 +543,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                 if self.poll()?.is_some() {
                     return Ok(false);
                 }
-                std::thread::sleep(POLL_INTERVAL);
+                std::thread::sleep(BOUNDED_POLL_INTERVAL);
             }
             self.signal_group(libc::SIGKILL)?;
             let mut child = self
@@ -608,7 +624,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     Err(_) => GuardianDisposition::ChildIoFailed,
                 };
             }
-            std::thread::sleep(POLL_INTERVAL);
+            std::thread::sleep(SUPERVISION_POLL_INTERVAL);
         }
     }
 
@@ -644,7 +660,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     Err(_) => ApplicationDisposition::ChildIoFailed,
                 };
             }
-            std::thread::sleep(POLL_INTERVAL);
+            std::thread::sleep(SUPERVISION_POLL_INTERVAL);
         }
     }
 
@@ -856,6 +872,23 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                                 "stock restoration failed before application handoff: {error:?}"
                             )
                         })?;
+                    } else if !application.manifest.requirements.prevent_suspend {
+                        let active_lease = lease
+                            .as_mut()
+                            .expect("foreground lease exists until supervisor handoff");
+                        if let Err(error) = active_lease.set_suspend_inhibited(&mut system, false) {
+                            let restore_result = lease
+                                .take()
+                                .expect("foreground lease exists after suspend-policy failure")
+                                .restore(&mut system);
+                            return match restore_result {
+                                Ok(()) => Err(error.into()),
+                                Err(restore_error) => Err(format!(
+                                    "{error}; stock restoration also failed: {restore_error}"
+                                )
+                                .into()),
+                            };
+                        }
                     }
                     let handoff_label = match application.manifest.display.handoff {
                         DisplayHandoff::Supervisor => "inside the Ferrink foreground lease",
@@ -903,6 +936,24 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     }
                     if application.manifest.display.handoff == DisplayHandoff::StockMediated {
                         break;
+                    }
+                    if !application.manifest.requirements.prevent_suspend {
+                        let active_lease = lease
+                            .as_mut()
+                            .expect("foreground lease exists after supervisor handoff");
+                        if let Err(error) = active_lease.set_suspend_inhibited(&mut system, true) {
+                            let restore_result = lease
+                                .take()
+                                .expect("foreground lease exists after suspend-policy failure")
+                                .restore(&mut system);
+                            return match restore_result {
+                                Ok(()) => Err(error.into()),
+                                Err(restore_error) => Err(format!(
+                                    "{error}; stock restoration also failed: {restore_error}"
+                                )
+                                .into()),
+                            };
+                        }
                     }
                 }
                 action @ (ShellRequest::Reboot | ShellRequest::PowerOff) => {

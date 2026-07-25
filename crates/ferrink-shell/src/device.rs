@@ -80,6 +80,8 @@ pub enum ShellDeviceCommand {
     SetFrontlight(u8),
     /// Set warm-light intensity to one absolute reviewed level.
     SetWarmth(u8),
+    /// Toggle the stock ambient-light controller.
+    ToggleAutoBrightness,
     /// Toggle the reviewed Wi-Fi service pair.
     ToggleWifi,
     /// Advance the optional persisted literary-clock interval.
@@ -274,6 +276,15 @@ pub fn install_device_handlers<P: ShellDevicePort + 'static>(
         let result = warmth_port
             .borrow_mut()
             .apply(ShellDeviceCommand::SetWarmth(value));
+        apply_result(&weak_ui, result);
+    });
+
+    let weak_ui = ui.as_weak();
+    let auto_brightness_port = Rc::clone(&port);
+    actions.on_toggle_auto_brightness(move || {
+        let result = auto_brightness_port
+            .borrow_mut()
+            .apply(ShellDeviceCommand::ToggleAutoBrightness);
         apply_result(&weak_ui, result);
     });
 
