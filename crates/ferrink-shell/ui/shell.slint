@@ -356,6 +356,7 @@ component CompactButton inherits Rectangle {
 
 component QuickAction inherits Rectangle {
     in property <string> symbol;
+    in property <bool> more-symbol: false;
     in property <string> label;
     in property <string> state;
     in property <float> ui-scale: 1;
@@ -386,13 +387,23 @@ component QuickAction inherits Rectangle {
                 border-color: root.enabled ? #111111 : #777773;
                 border-radius: 21px * root.ui-scale;
 
-                Text {
+                if !root.more-symbol : Text {
                     text: root.symbol;
                     color: quick-action.pressed ? white : (root.enabled ? #111111 : #777773);
                     font-size: 20px * root.ui-scale;
                     font-weight: 800;
                     horizontal-alignment: center;
                     vertical-alignment: center;
+                }
+
+                if root.more-symbol : Image {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: 24px * root.ui-scale;
+                    height: 24px * root.ui-scale;
+                    source: @image-url("icons/more.svg");
+                    colorize: quick-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    image-fit: contain;
                 }
             }
         }
@@ -1387,7 +1398,7 @@ export component ShellWindow inherits Window {
                 }
                 QuickAction {
                     horizontal-stretch: 1;
-                    symbol: "⋮";
+                    more-symbol: true;
                     label: "All settings";
                     state: "Open";
                     ui-scale: root.ui-scale;
