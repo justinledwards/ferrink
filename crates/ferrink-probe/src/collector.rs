@@ -1027,17 +1027,27 @@ fn filesystem_space(files: &RootedFiles, virtual_path: &str) -> Option<Filesyste
     if unsafe { libc::statvfs(c_path.as_ptr(), &mut stats) } != 0 {
         return None;
     }
-    let block_size = if stats.f_frsize == 0 {
-        stats.f_bsize as u64
+    let raw_block_size = if stats.f_frsize == 0 {
+        stats.f_bsize
     } else {
-        stats.f_frsize as u64
+        stats.f_frsize
     };
+    let block_size = libc_counter_to_u64(raw_block_size)?;
+    let total_blocks = libc_counter_to_u64(stats.f_blocks)?;
+    let available_blocks = libc_counter_to_u64(stats.f_bavail)?;
     Some(FilesystemSpace {
         path: virtual_path.to_owned(),
         block_size,
-        total_bytes: block_size.saturating_mul(stats.f_blocks as u64),
-        available_bytes: block_size.saturating_mul(stats.f_bavail as u64),
+        total_bytes: block_size.saturating_mul(total_blocks),
+        available_bytes: block_size.saturating_mul(available_blocks),
     })
+}
+
+fn libc_counter_to_u64<T>(value: T) -> Option<u64>
+where
+    u64: TryFrom<T>,
+{
+    u64::try_from(value).ok()
 }
 
 fn is_numbered_name(value: &str, prefix: &str) -> bool {
