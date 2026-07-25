@@ -4,8 +4,15 @@
   "captured_at_unix_seconds": 0,
   "redaction": {
     "enabled": true,
-    "policy": "synthetic-public-fixture-v1",
-    "excluded_categories": ["all_device_identifiers", "network_data", "credentials", "documents"]
+    "policy": "ferrink-wp1-v1",
+    "excluded_categories": [
+      "full_serial_numbers",
+      "network_credentials_and_ssids",
+      "tokens_and_account_data",
+      "ssh_keys",
+      "document_names",
+      "process_command_lines"
+    ]
   },
   "identity": {
     "serial_prefix": "DEMO",

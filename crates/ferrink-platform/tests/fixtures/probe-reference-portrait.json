@@ -4,8 +4,15 @@
   "captured_at_unix_seconds": 0,
   "redaction": {
     "enabled": true,
-    "policy": "synthetic-public-fixture-v1",
-    "excluded_categories": ["all_device_identifiers", "network_data", "credentials", "documents"]
+    "policy": "ferrink-wp1-v1",
+    "excluded_categories": [
+      "full_serial_numbers",
+      "network_credentials_and_ssids",
+      "tokens_and_account_data",
+      "ssh_keys",
+      "document_names",
+      "process_command_lines"
+    ]
   },
   "identity": {
     "serial_prefix": "TEST",
@@ -35,8 +42,8 @@
     "device": "/dev/input/event8", "name": "cyttsp5_mt", "id": {"bus": null, "vendor": null, "product": null, "version": null}, "capabilities": {},
     "axes": [
       {"code": 47, "name": "abs_mt_slot", "minimum": 0, "maximum": 15, "fuzz": 0, "flat": 0, "resolution": 0},
-      {"code": 53, "name": "abs_mt_position_x", "minimum": 0, "maximum": 1264, "fuzz": 0, "flat": 0, "resolution": 0},
-      {"code": 54, "name": "abs_mt_position_y", "minimum": 0, "maximum": 1680, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 53, "name": "abs_mt_position_x", "minimum": 0, "maximum": 1263, "fuzz": 0, "flat": 0, "resolution": 0},
+      {"code": 54, "name": "abs_mt_position_y", "minimum": 0, "maximum": 1679, "fuzz": 0, "flat": 0, "resolution": 0},
       {"code": 57, "name": "abs_mt_tracking_id", "minimum": 0, "maximum": 16, "fuzz": 0, "flat": 0, "resolution": 0},
       {"code": 58, "name": "abs_mt_pressure", "minimum": 0, "maximum": 255, "fuzz": 0, "flat": 0, "resolution": 0}
     ]
