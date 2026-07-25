@@ -278,6 +278,28 @@ impl EarlyBootForegroundLease {
         self.stopped_awesome.len()
     }
 
+    /// Selects whether automatic suspend remains inhibited while this lease is
+    /// active without releasing its exact foreground process ownership.
+    ///
+    /// A pre-existing inhibitor is never cleared because it is not owned by
+    /// this lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact failed inhibitor-write stage.
+    pub fn set_suspend_inhibited<S: ForegroundSystem>(
+        &mut self,
+        system: &mut S,
+        inhibit: bool,
+    ) -> Result<(), StageFailure<S::Error>> {
+        set_suspend_inhibited(
+            system,
+            self.original_prevent_screen_saver,
+            &mut self.prevent_screen_saver_changed,
+            inhibit,
+        )
+    }
+
     /// Resumes the captured Awesome identities and restores the inhibitor.
     ///
     /// # Errors
@@ -306,6 +328,28 @@ impl ForegroundLease {
     #[must_use]
     pub fn paused_process_count(&self) -> usize {
         self.state.stopped_awesome.len() + self.state.stopped_cvm.len()
+    }
+
+    /// Selects whether automatic suspend remains inhibited while this lease is
+    /// active without releasing its exact foreground process ownership.
+    ///
+    /// A pre-existing inhibitor is never cleared because it is not owned by
+    /// this lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns the exact failed inhibitor-write stage.
+    pub fn set_suspend_inhibited<S: ForegroundSystem>(
+        &mut self,
+        system: &mut S,
+        inhibit: bool,
+    ) -> Result<(), StageFailure<S::Error>> {
+        set_suspend_inhibited(
+            system,
+            self.state.original_prevent_screen_saver,
+            &mut self.state.prevent_screen_saver_changed,
+            inhibit,
+        )
     }
 
     /// Restores only mutations recorded by this lease, then repaints stock.
@@ -548,6 +592,33 @@ fn restore_early_boot_state<S: ForegroundSystem>(
         );
     }
     failures
+}
+
+fn set_suspend_inhibited<S: ForegroundSystem>(
+    system: &mut S,
+    original_prevent_screen_saver: bool,
+    changed: &mut bool,
+    inhibit: bool,
+) -> Result<(), StageFailure<S::Error>> {
+    if original_prevent_screen_saver || inhibit == *changed {
+        return Ok(());
+    }
+
+    let stage = ForegroundStage::SetPreventScreenSaver(inhibit);
+    if inhibit {
+        // Record restoration intent before the external mutation so a
+        // reported partial side effect is still reversed by restore().
+        *changed = true;
+        system
+            .set_prevent_screen_saver(true)
+            .map_err(|error| StageFailure { stage, error })?;
+    } else {
+        system
+            .set_prevent_screen_saver(false)
+            .map_err(|error| StageFailure { stage, error })?;
+        *changed = false;
+    }
+    Ok(())
 }
 
 fn inspect_processes<S: ForegroundSystem>(
@@ -835,6 +906,39 @@ mod tests {
                 Action::Repaint,
             ]
         );
+    }
+
+    #[test]
+    fn foreground_lease_allows_suspend_only_while_requested() {
+        let mut system = FakeSystem::default();
+        let mut lease = acquire_foreground(&mut system).unwrap();
+        system.actions.clear();
+
+        lease.set_suspend_inhibited(&mut system, false).unwrap();
+        lease.set_suspend_inhibited(&mut system, false).unwrap();
+        lease.set_suspend_inhibited(&mut system, true).unwrap();
+
+        assert_eq!(
+            system.actions,
+            [Action::SetPrevent(false), Action::SetPrevent(true)]
+        );
+        assert!(system.prevent);
+    }
+
+    #[test]
+    fn foreground_lease_preserves_a_preexisting_suspend_inhibitor() {
+        let mut system = FakeSystem {
+            prevent: true,
+            ..FakeSystem::default()
+        };
+        let mut lease = acquire_foreground(&mut system).unwrap();
+        system.actions.clear();
+
+        lease.set_suspend_inhibited(&mut system, false).unwrap();
+        lease.set_suspend_inhibited(&mut system, true).unwrap();
+
+        assert!(system.actions.is_empty());
+        assert!(system.prevent);
     }
 
     #[test]
