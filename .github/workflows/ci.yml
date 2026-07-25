@@ -16,7 +16,7 @@ jobs:
       - name: Check repository safety
         run: | # pragma: allowlist secret
           python -m pip install --disable-pip-version-check detect-secrets==1.5.0
-          detect-secrets scan --all-files --exclude-files '^target/' \
+          detect-secrets scan --all-files --exclude-files '^(\.git|target)/' \
             --exclude-lines '^slint(-build)? = .*rev = "[0-9a-f]{40}".*$' \
             > /tmp/ferrink-scan.json
           result_count="$(jq '.results | length' /tmp/ferrink-scan.json)"
