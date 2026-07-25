@@ -67,6 +67,9 @@ impl ShellDevicePort for FakeDevicePort {
             ShellDeviceCommand::SetWarmth(value) => {
                 self.snapshot.warmth = value.min(24);
             }
+            ShellDeviceCommand::ToggleAutoBrightness => {
+                self.snapshot.auto_brightness = !self.snapshot.auto_brightness;
+            }
             ShellDeviceCommand::ToggleWifi => {
                 self.snapshot.wifi = if self.snapshot.wifi == "Off" {
                     "Wi-Fi".to_owned()
@@ -204,6 +207,8 @@ fn koa3_physical_taps_reach_the_real_top_bar_and_application_row() -> Result<(),
     assert_eq!(data.get_frontlight_level(), 11);
     ui.global::<ShellActions>().invoke_set_warmth(7);
     assert_eq!(data.get_warmth_level(), 7);
+    ui.global::<ShellActions>().invoke_toggle_auto_brightness();
+    assert!(data.get_auto_brightness());
     ui.global::<ShellActions>()
         .invoke_cycle_literary_clock_interval();
     assert_eq!(

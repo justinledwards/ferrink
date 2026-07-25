@@ -86,6 +86,7 @@ export global ShellActions {
     callback adjust-warmth(int);
     callback set-frontlight(int);
     callback set-warmth(int);
+    callback toggle-auto-brightness();
     callback toggle-wifi();
     callback cycle-literary-clock-interval();
     callback select-launcher-background(int);
@@ -691,6 +692,70 @@ component SettingChoiceRow inherits Rectangle {
     }
 }
 
+component ToggleSettingRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> checked: false;
+    in property <bool> enabled: true;
+    in property <float> ui-scale: 1;
+    callback toggled();
+    forward-focus: toggle-action;
+
+    height: 62px * root.ui-scale;
+    background: toggle-action.pressed ? #111111 : (root.enabled ? transparent : #dedcd3);
+    border-width: (toggle-action.has-focus ? 4px : 1px) * root.ui-scale;
+    border-color: #111111;
+    accessible-role: button;
+    accessible-label: root.label + ". " + (root.checked ? "On" : "Off") + ". Tap to toggle.";
+    accessible-enabled: root.enabled;
+
+    HorizontalLayout {
+        padding-left: 18px * root.ui-scale;
+        padding-right: 14px * root.ui-scale;
+        spacing: 12px * root.ui-scale;
+
+        Text {
+            text: root.label;
+            color: toggle-action.pressed ? white : (root.enabled ? #4b4a46 : #777773);
+            font-size: 18px * root.ui-scale;
+            vertical-alignment: center;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: root.checked ? "ON" : "OFF";
+            color: toggle-action.pressed ? white : (root.enabled ? #111111 : #777773);
+            font-size: 17px * root.ui-scale;
+            font-weight: 800;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 58px * root.ui-scale;
+            height: 32px * root.ui-scale;
+            background: root.checked ? #111111 : transparent;
+            border-width: 2px * root.ui-scale;
+            border-color: root.enabled ? #111111 : #777773;
+            border-radius: 4px * root.ui-scale;
+
+            Rectangle {
+                x: (root.checked ? 30px : 4px) * root.ui-scale;
+                y: 4px * root.ui-scale;
+                width: 22px * root.ui-scale;
+                height: 24px * root.ui-scale;
+                background: root.checked ? white : #111111;
+                border-radius: 2px * root.ui-scale;
+            }
+        }
+    }
+
+    toggle-action := ActionArea {
+        enabled: root.enabled;
+        activated => { root.toggled(); }
+    }
+
+    accessible-action-default => {
+        if root.enabled { root.toggled(); }
+    }
+}
+
 component BackgroundChoiceRow inherits Rectangle {
     in property <string> title;
     in property <string> detail;
@@ -1081,7 +1146,13 @@ export component ShellWindow inherits Window {
                         }
                         StatusRow { label: "Front light"; value: "\{ShellData.frontlight-level} / 24"; ui-scale: root.ui-scale; }
                         StatusRow { label: "Warmth"; value: "\{ShellData.warmth-level} / 24"; ui-scale: root.ui-scale; }
-                        StatusRow { label: "Auto brightness"; value: ShellData.auto-brightness ? "ON" : "OFF"; ui-scale: root.ui-scale; }
+                        ToggleSettingRow {
+                            label: "Auto brightness";
+                            checked: ShellData.auto-brightness;
+                            enabled: !root.modal-visible && ShellData.display-controls-available;
+                            ui-scale: root.ui-scale;
+                            toggled => { ShellActions.toggle-auto-brightness(); }
+                        }
                         SettingChoiceRow {
                             label: "Background";
                             value: ShellData.launcher-background-label;
