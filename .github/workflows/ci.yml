@@ -13,6 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check repository safety
+        run: | # pragma: allowlist secret
+          python -m pip install --disable-pip-version-check detect-secrets==1.5.0
+          detect-secrets scan --all-files --exclude-files '^target/' \
+            --exclude-lines '^slint(-build)? = .*rev = "[0-9a-f]{40}".*$' \
+            > /tmp/ferrink-scan.json
+          result_count="$(jq '.results | length' /tmp/ferrink-scan.json)"
+          if (( result_count > 0 )); then
+            echo "Potential findings were detected (candidate values are hidden):"
+            jq -r \
+              '.results | to_entries[] | "\(.key): \([.value[].type] | unique | join(", "))"' \
+              /tmp/ferrink-scan.json
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@1.92
         with:
           components: rustfmt, clippy
@@ -24,10 +38,3 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Audit public source
         run: tools/audit-public-source
-      - name: Scan for accidental secrets
-        run: |
-          python -m pip install --disable-pip-version-check detect-secrets
-          detect-secrets scan --all-files --exclude-files '^target/' \
-            --exclude-lines '^slint(-build)? = .*rev = "[0-9a-f]{40}".*$' \
-            > /tmp/ferrink-secrets.json
-          test "$(jq '.results | length' /tmp/ferrink-secrets.json)" -eq 0
