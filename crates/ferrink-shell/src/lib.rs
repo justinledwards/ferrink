@@ -29,7 +29,6 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Cursor, Seek};
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::Duration;
 
 use ferrink_manifest::{ApplicationCatalog, MAX_APPLICATIONS};
@@ -39,49 +38,118 @@ const MAX_APPLICATION_ICON_BYTES: u64 = 1_048_576;
 const MIN_APPLICATION_ICON_EDGE: u32 = 64;
 const MAX_APPLICATION_ICON_EDGE: u32 = 512;
 
-/// The embedded font family used by the shell and its screenshot fixtures.
+/// The font family used by the shell and its screenshot fixtures.
 pub const SHELL_FONT_FAMILY: &str = "Inter Variable";
 
-/// Failure to register the bundled shell font with Slint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ShellFontError;
+/// The root-local path from which a Kindle shell loads its reviewed font.
+pub const SHELL_FONT_INSTALL_PATH: &str = "/var/local/ferrink/assets/InterVariable.ttf";
+
+#[cfg(all(
+    feature = "kindle-runtime",
+    target_arch = "arm",
+    target_os = "linux",
+    target_env = "musl"
+))]
+const SHELL_FONT_PATH: &str = SHELL_FONT_INSTALL_PATH;
+
+#[cfg(not(all(
+    feature = "kindle-runtime",
+    target_arch = "arm",
+    target_os = "linux",
+    target_env = "musl"
+)))]
+const SHELL_FONT_PATH: &str = env!("FERRINK_BUILD_SHELL_FONT_PATH");
+
+/// Failure to load or register the shell font with Slint.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum ShellFontError {
+    /// The configured path could not be inspected.
+    Inspect {
+        /// Font path that could not be inspected.
+        path: &'static str,
+        /// Underlying filesystem error.
+        source: std::io::Error,
+    },
+    /// The configured path was not a regular file.
+    NotRegularFile {
+        /// Rejected font path.
+        path: &'static str,
+    },
+    /// Fontique found no usable face in the configured file.
+    Unusable {
+        /// Rejected font path.
+        path: &'static str,
+    },
+}
 
 impl fmt::Display for ShellFontError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("bundled shell font contained no usable faces")
+        match self {
+            Self::Inspect { path, source } => {
+                write!(formatter, "could not inspect shell font {path}: {source}")
+            }
+            Self::NotRegularFile { path } => {
+                write!(formatter, "shell font is not a regular file: {path}")
+            }
+            Self::Unusable { path } => {
+                write!(formatter, "shell font contained no usable faces: {path}")
+            }
+        }
     }
 }
 
-impl std::error::Error for ShellFontError {}
+impl std::error::Error for ShellFontError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Inspect { source, .. } => Some(source),
+            Self::NotRegularFile { .. } | Self::Unusable { .. } => None,
+        }
+    }
+}
 
-/// Registers the bundled Inter variable face and makes it the sans-serif default.
+/// Registers the reviewed Inter variable face and makes it the sans-serif default.
 ///
 /// Slint's platform must be installed before this function is called. Keeping
-/// the font bytes in a Cargo dependency makes host fixtures and later device
-/// rendering independent of the system font database.
+/// the font at a build-generated path keeps host fixtures deterministic. The
+/// Kindle target uses [`SHELL_FONT_INSTALL_PATH`] so its executable does not
+/// contain a duplicate copy of the asset. Fontique memory-maps path-backed
+/// font data when it is needed.
 ///
 /// # Errors
 ///
-/// Returns [`ShellFontError`] when Fontique cannot discover any face in the
-/// bundled font.
+/// Returns [`ShellFontError`] when the configured path is unavailable, is not
+/// a regular file, or contains no discoverable Inter Variable face.
 pub fn install_shell_font() -> Result<(), ShellFontError> {
-    use slint::fontique_011::fontique::{Blob, GenericFamily};
+    use slint::fontique_011::fontique::GenericFamily;
 
-    let blob = Blob::new(Arc::new(damascene_fonts_inter::INTER_VARIABLE));
-    let mut collection = slint::fontique_011::shared_collection();
-    let registered = collection.register_fonts(blob, None);
-    let family_ids: Vec<_> = registered.iter().map(|(family_id, _)| *family_id).collect();
-
-    if family_ids.is_empty() {
-        return Err(ShellFontError);
+    let path = Path::new(SHELL_FONT_PATH);
+    let metadata = path
+        .symlink_metadata()
+        .map_err(|source| ShellFontError::Inspect {
+            path: SHELL_FONT_PATH,
+            source,
+        })?;
+    if !metadata.file_type().is_file() {
+        return Err(ShellFontError::NotRegularFile {
+            path: SHELL_FONT_PATH,
+        });
     }
+
+    let mut collection = slint::fontique_011::shared_collection();
+    collection.load_fonts_from_paths([path]);
+    let family_id = collection
+        .family_id(SHELL_FONT_FAMILY)
+        .ok_or(ShellFontError::Unusable {
+            path: SHELL_FONT_PATH,
+        })?;
 
     for generic in [
         GenericFamily::SansSerif,
         GenericFamily::SystemUi,
         GenericFamily::UiSansSerif,
     ] {
-        collection.set_generic_families(generic, family_ids.iter().copied());
+        collection.set_generic_families(generic, [family_id].into_iter());
     }
 
     Ok(())

@@ -36,6 +36,16 @@ Ferrink records externally observable behavior from that audit but does not
 copy its implementation text or code. The same rule applies to every
 idea-only reference listed in [ACKNOWLEDGMENTS.md](../ACKNOWLEDGMENTS.md).
 
+## Distributed shell font
+
+The deterministic shell and screenshot fixtures use Inter Variable from
+`damascene-fonts-inter` 0.1.0. Its Rust wrapper declares `MIT OR Apache-2.0`,
+and the Inter font declares `OFL-1.1`; the package combines those as `(MIT OR
+Apache-2.0) AND OFL-1.1`. The build emits the unmodified font as a separate
+asset, installed at `/var/local/ferrink/assets/InterVariable.ttf`, rather than
+embedding it in the shell executable. Release notices and corresponding source
+archives must retain both the wrapper license and the font's OFL notice.
+
 ## Release checklist
 
 - retain `LICENSE`, `LICENSES/`, `Cargo.lock`, and `THIRD_PARTY_NOTICES.md`;
