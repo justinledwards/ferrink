@@ -135,6 +135,10 @@ pub trait ForegroundSystem {
     /// to a stale inverted state would corrupt both Ferrink and stock output.
     fn normalize_display_mode(&mut self) -> Result<(), Self::Error>;
 
+    /// Clears any KOA3 post-framebuffer lightbox region before the stock stack
+    /// resumes. The later stock repaint makes this request physically visible.
+    fn clear_lightbox(&mut self) -> Result<(), Self::Error>;
+
     /// Performs the separately reviewed stock repaint after restoration.
     fn repaint_stock(&mut self) -> Result<(), Self::Error>;
 }
@@ -158,6 +162,8 @@ pub enum ForegroundStage {
     Quiesce,
     /// Normalize the global display mode before Ferrink renders.
     NormalizeDisplayMode,
+    /// Clear any foreground-owned post-framebuffer lightbox region.
+    ClearLightbox,
     /// Repaint stock after restoration.
     RepaintStock,
 }
@@ -596,7 +602,15 @@ fn restore_early_boot_state<S: ForegroundSystem>(
     changed: &mut bool,
     stopped_awesome: &mut Vec<ProcessIdentity>,
 ) -> Vec<StageFailure<S::Error>> {
+    let had_mutation = *changed || !stopped_awesome.is_empty();
     let mut failures = Vec::new();
+    if had_mutation {
+        attempt_cleanup(
+            &mut failures,
+            ForegroundStage::ClearLightbox,
+            system.clear_lightbox(),
+        );
+    }
     while let Some(identity) = stopped_awesome.pop() {
         attempt_cleanup(
             &mut failures,
@@ -722,6 +736,14 @@ fn restore_state<S: ForegroundSystem>(
         || !state.stopped_cvm.is_empty();
     let mut failures = Vec::new();
 
+    if had_mutation {
+        attempt_cleanup(
+            &mut failures,
+            ForegroundStage::ClearLightbox,
+            system.clear_lightbox(),
+        );
+    }
+
     for identity in state.stopped_cvm.drain(..).rev() {
         attempt_cleanup(
             &mut failures,
@@ -809,6 +831,7 @@ mod tests {
         Transition(ProcessIdentity, ProcessTransition),
         Quiesce(Duration),
         NormalizeDisplayMode,
+        ClearLightbox,
         Repaint,
     }
 
@@ -898,6 +921,10 @@ mod tests {
             self.record(Action::NormalizeDisplayMode)
         }
 
+        fn clear_lightbox(&mut self) -> Result<(), Self::Error> {
+            self.record(Action::ClearLightbox)
+        }
+
         fn repaint_stock(&mut self) -> Result<(), Self::Error> {
             self.record(Action::Repaint)
         }
@@ -926,6 +953,7 @@ mod tests {
                 Action::Transition(cvm, ProcessTransition::Stop),
                 Action::Quiesce(FOREGROUND_QUIESCENCE),
                 Action::NormalizeDisplayMode,
+                Action::ClearLightbox,
                 Action::Transition(cvm, ProcessTransition::Continue),
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPillow(PillowState::Enabled),
@@ -1027,8 +1055,9 @@ mod tests {
             }) if identity == cvm && rollback_failures.is_empty()
         ));
         assert_eq!(
-            &system.actions[system.actions.len() - 5..],
+            &system.actions[system.actions.len() - 6..],
             [
+                Action::ClearLightbox,
                 Action::Transition(cvm, ProcessTransition::Continue),
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPillow(PillowState::Enabled),
@@ -1058,8 +1087,9 @@ mod tests {
             }) if rollback_failures.is_empty()
         ));
         assert_eq!(
-            &system.actions[system.actions.len() - 5..],
+            &system.actions[system.actions.len() - 6..],
             [
+                Action::ClearLightbox,
                 Action::Transition(system.cvm[0], ProcessTransition::Continue),
                 Action::Transition(system.awesome[0], ProcessTransition::Continue),
                 Action::SetPillow(PillowState::Enabled),
@@ -1091,6 +1121,21 @@ mod tests {
             error.failures[0].stage,
             ForegroundStage::TransitionProcess(cvm, ProcessTransition::Continue)
         );
+        assert_eq!(system.actions.last(), Some(&Action::Repaint));
+    }
+
+    #[test]
+    fn lightbox_clear_failure_still_restores_every_stock_stage() {
+        let mut system = FakeSystem::default();
+        let lease = acquire_foreground(&mut system).unwrap();
+        system.actions.clear();
+        system.fail_at = Some(Action::ClearLightbox);
+
+        let error = lease.restore(&mut system).unwrap_err();
+
+        assert_eq!(error.failures.len(), 1);
+        assert_eq!(error.failures[0].stage, ForegroundStage::ClearLightbox);
+        assert_eq!(system.actions.first(), Some(&Action::ClearLightbox));
         assert_eq!(system.actions.last(), Some(&Action::Repaint));
     }
 
@@ -1140,6 +1185,7 @@ mod tests {
                 Action::Transition(awesome, ProcessTransition::Stop),
                 Action::Quiesce(FOREGROUND_QUIESCENCE),
                 Action::NormalizeDisplayMode,
+                Action::ClearLightbox,
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPrevent(false),
             ]
@@ -1211,8 +1257,12 @@ mod tests {
             }) if rollback_failures.is_empty()
         ));
         assert_eq!(
-            &system.actions[system.actions.len() - 2..],
-            [Action::SetPrevent(true), Action::SetPrevent(false)]
+            &system.actions[system.actions.len() - 3..],
+            [
+                Action::SetPrevent(true),
+                Action::ClearLightbox,
+                Action::SetPrevent(false)
+            ]
         );
     }
 
@@ -1242,9 +1292,10 @@ mod tests {
             }) if identity == awesome && rollback_failures.is_empty()
         ));
         assert_eq!(
-            &system.actions[system.actions.len() - 3..],
+            &system.actions[system.actions.len() - 4..],
             [
                 Action::Transition(awesome, ProcessTransition::Stop),
+                Action::ClearLightbox,
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPrevent(false),
             ]

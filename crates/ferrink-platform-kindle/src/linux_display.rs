@@ -11,9 +11,13 @@ use ferrink_platform::{
     RefreshRequest, ResolvedRuntimeDevice, UpdateMarker,
 };
 
-use crate::{DisplayTarget, L0DisplayCore};
+use crate::{
+    DisplayTarget, Koa3LightboxRequest, Koa3LightboxSubmission, Koa3LightboxTarget, L0DisplayCore,
+    LinuxKoa3LightboxError,
+};
 
 use super::linux::query_framebuffer_capability;
+use super::linux_lightbox::submit_koa3_lightbox;
 use super::zelda::{MXCFB_SEND_UPDATE_ZELDA, ZeldaUpdateRequest};
 
 /// Explicitly owned framebuffer mapping for repeated validated foreground frames.
@@ -176,6 +180,17 @@ impl DisplayTarget for LinuxForegroundDisplayTarget {
             });
         }
         Ok(())
+    }
+}
+
+impl Koa3LightboxTarget for LinuxForegroundDisplayTarget {
+    type Error = LinuxKoa3LightboxError;
+
+    fn submit_lightbox(
+        &mut self,
+        request: Koa3LightboxRequest,
+    ) -> Result<Koa3LightboxSubmission, Self::Error> {
+        submit_koa3_lightbox(&self.file, request)
     }
 }
 
