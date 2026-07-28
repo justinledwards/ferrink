@@ -22,12 +22,7 @@ mod linux;
     feature = "linux-foreground-display"
 ))]
 mod linux_display;
-#[cfg(all(
-    target_os = "linux",
-    target_arch = "arm",
-    target_pointer_width = "32",
-    feature = "linux-lightbox"
-))]
+#[cfg(all(target_os = "linux", feature = "linux-lightbox"))]
 mod linux_lightbox;
 #[cfg(all(
     target_os = "linux",
@@ -66,12 +61,7 @@ pub use linux::*;
     feature = "linux-foreground-display"
 ))]
 pub use linux_display::*;
-#[cfg(all(
-    target_os = "linux",
-    target_arch = "arm",
-    target_pointer_width = "32",
-    feature = "linux-lightbox"
-))]
+#[cfg(all(target_os = "linux", feature = "linux-lightbox"))]
 pub use linux_lightbox::*;
 #[cfg(all(
     target_os = "linux",
