@@ -511,6 +511,17 @@ pub fn install_shell_handlers<P: ShellCommandPort + 'static>(
     });
 }
 
+/// Observes the quick-settings presentation state without granting Slint any
+/// display or device authority.
+///
+/// The callback receives whether the drawer is open and the rounded physical
+/// height of its sharp foreground region. The Kindle runtime validates and
+/// translates this intent through its typed display adapter.
+pub fn install_quick_settings_observer(ui: &ShellWindow, observer: impl Fn(bool, i32) + 'static) {
+    ui.global::<ShellActions>()
+        .on_quick_settings_changed(observer);
+}
+
 /// The shell surface currently presented to the operator.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ShellView {

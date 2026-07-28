@@ -90,6 +90,7 @@ export global ShellActions {
     callback toggle-wifi();
     callback cycle-literary-clock-interval();
     callback select-launcher-background(int);
+    callback quick-settings-changed(bool, int);
 }
 
 component ActionArea inherits FocusScope {
@@ -832,10 +833,18 @@ export component ShellWindow inherits Window {
     in property <float> ui-scale: 1;
     in-out property <int> focus-generation: 0;
     in-out property <bool> quick-settings-open: false;
+    out property <int> quick-settings-foreground-height: ceil(446 * root.ui-scale);
     in-out property <bool> background-picker-open: false;
     private property <bool> blocking-modal-visible: ShellData.confirmation != ConfirmationKind.none || ShellData.alert != AlertKind.none;
 
     private property <bool> modal-visible: root.quick-settings-open || root.blocking-modal-visible;
+
+    changed quick-settings-open => {
+        ShellActions.quick-settings-changed(
+            root.quick-settings-open,
+            root.quick-settings-foreground-height,
+        );
+    }
 
     public function focus-keyboard-root() {
         keyboard-scope.focus();
