@@ -12,6 +12,7 @@
 
 mod input_grab;
 mod input_loop;
+mod lightbox;
 #[cfg(all(target_os = "linux", feature = "linux-device"))]
 mod linux;
 #[cfg(all(
@@ -21,6 +22,8 @@ mod linux;
     feature = "linux-foreground-display"
 ))]
 mod linux_display;
+#[cfg(all(target_os = "linux", feature = "linux-lightbox"))]
+mod linux_lightbox;
 #[cfg(all(
     target_os = "linux",
     target_arch = "arm",
@@ -48,6 +51,7 @@ mod zelda;
 
 pub use input_grab::*;
 pub use input_loop::*;
+pub use lightbox::*;
 #[cfg(all(target_os = "linux", feature = "linux-device"))]
 pub use linux::*;
 #[cfg(all(
@@ -57,6 +61,8 @@ pub use linux::*;
     feature = "linux-foreground-display"
 ))]
 pub use linux_display::*;
+#[cfg(all(target_os = "linux", feature = "linux-lightbox"))]
+pub use linux_lightbox::*;
 #[cfg(all(
     target_os = "linux",
     target_arch = "arm",

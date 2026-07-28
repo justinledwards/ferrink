@@ -6,6 +6,9 @@ active_file=${FERRINK_ACTIVE_FILE:-$ferrink_root/active-version}
 runtime_root=/var/run/ferrink
 rootfs_disable=/opt/ferrink/disable
 local_disable=$ferrink_root/disable
+shell_font=$ferrink_root/assets/InterVariable.ttf
+shell_font_sha=4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf
+shell_font_size=879708
 mounts_file=${FERRINK_MOUNTS_FILE:-/proc/mounts}
 userstore_root=${FERRINK_USERSTORE_ROOT:-/mnt/us}
 userstore_disable=$userstore_root/BOOT_KINDLEOS
@@ -47,6 +50,12 @@ for manifest in "$home_assistant_manifest" "$koreader_manifest"; do
     [ -f "$manifest" ] && [ ! -L "$manifest" ] \
         || fallback "application catalog is unavailable"
 done
+[ -f "$shell_font" ] && [ ! -L "$shell_font" ] \
+    || fallback "shell font is unavailable"
+[ "$(/usr/bin/stat -c '%s' "$shell_font")" = "$shell_font_size" ] \
+    || fallback "shell font size is invalid"
+[ "$(/usr/bin/sha256sum "$shell_font" | /usr/bin/awk '{print $1}')" = "$shell_font_sha" ] \
+    || fallback "shell font failed hash verification"
 
 [ -f "$active_file" ] && [ ! -L "$active_file" ] \
     || fallback "active version file is unavailable"

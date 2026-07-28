@@ -13,7 +13,7 @@ use ferrink_shell::{
     ShellCommandOutcome, ShellCommandPort, ShellController, ShellData, ShellDeviceCommand,
     ShellDevicePort, ShellDeviceSnapshot, ShellProfile, ShellView, ShellWindow,
     configure_bundled_preview_catalog, configure_shell_window, install_device_handlers,
-    install_shell_font, install_shell_handlers, sync_shell_ui,
+    install_quick_settings_observer, install_shell_font, install_shell_handlers, sync_shell_ui,
 };
 use slint::ComponentHandle;
 use slint::platform::software_renderer::MinimalSoftwareWindow;
@@ -193,6 +193,13 @@ fn koa3_physical_taps_reach_the_real_top_bar_and_application_row() -> Result<(),
     let command_port = Rc::new(RefCell::new(InertPort::default()));
     sync_shell_ui(&ui, &controller.borrow());
     install_shell_handlers(&ui, &controller, &command_port);
+    let quick_settings_changes = Rc::new(RefCell::new(Vec::new()));
+    let recorded_changes = Rc::clone(&quick_settings_changes);
+    install_quick_settings_observer(&ui, move |open, foreground_height| {
+        recorded_changes
+            .borrow_mut()
+            .push((open, foreground_height));
+    });
     let _device_binding = install_device_handlers(&ui, fake_device_port());
     ui.show()?;
     window.request_redraw();
@@ -221,12 +228,14 @@ fn koa3_physical_taps_reach_the_real_top_bar_and_application_row() -> Result<(),
     // Physical center of the stock-style top chevron's generous hit target.
     tap(&mut pointer, &ui, DisplayPoint { x: 632, y: 44 })?;
     assert!(ui.get_quick_settings_open());
+    assert_eq!(quick_settings_changes.borrow().last(), Some(&(true, 732)));
     // A direct tap on the brightness track crosses the absolute-level callback;
     // the side minus/plus targets remain available for older touch hardware.
     tap(&mut pointer, &ui, DisplayPoint { x: 950, y: 375 })?;
     assert!(data.get_frontlight_level() >= 18);
     tap(&mut pointer, &ui, DisplayPoint { x: 632, y: 44 })?;
     assert!(!ui.get_quick_settings_open());
+    assert_eq!(quick_settings_changes.borrow().last(), Some(&(false, 732)));
 
     // Feed a native 32-bit KOA3 Protocol-B trace through the same ABI decoder,
     // profile transform, Slint bridge, and production callback as the device.

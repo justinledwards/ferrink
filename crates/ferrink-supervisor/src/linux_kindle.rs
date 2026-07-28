@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use ferrink_platform::ResolvedRuntimeDevice;
 use ferrink_platform_kindle::{
-    LinuxDisplayModeError, LinuxStockRepaintProcess, StockRepaintCore, StockRepaintError,
-    normalize_framebuffer_day_mode,
+    LinuxDisplayModeError, LinuxKoa3LightboxError, LinuxStockRepaintProcess, StockRepaintCore,
+    StockRepaintError, clear_koa3_lightbox, normalize_framebuffer_day_mode,
 };
 
 use crate::{
@@ -287,6 +287,12 @@ impl ForegroundSystem for LinuxKindleForegroundSystem {
         normalize_framebuffer_day_mode(&self.runtime)
             .map(|_| ())
             .map_err(KindleForegroundError::DisplayMode)
+    }
+
+    fn clear_lightbox(&mut self) -> Result<(), Self::Error> {
+        clear_koa3_lightbox(&self.runtime)
+            .map(|_| ())
+            .map_err(KindleForegroundError::Lightbox)
     }
 
     fn repaint_stock(&mut self) -> Result<(), Self::Error> {
@@ -606,6 +612,8 @@ pub enum KindleForegroundError {
     InvalidQuiescence(Duration),
     /// The global Kindle framebuffer mode could not be normalized.
     DisplayMode(LinuxDisplayModeError),
+    /// The foreground-owned KOA3 lightbox could not be cleared.
+    Lightbox(LinuxKoa3LightboxError),
     /// The promoted stock repaint failed.
     StockRepaint(StockRepaintError),
 }
@@ -685,6 +693,7 @@ impl std::fmt::Display for KindleForegroundError {
             Self::DisplayMode(error) => {
                 write!(formatter, "display-mode normalization failed: {error}")
             }
+            Self::Lightbox(error) => write!(formatter, "lightbox clear failed: {error}"),
             Self::StockRepaint(error) => write!(formatter, "stock repaint failed: {error}"),
         }
     }
@@ -694,6 +703,7 @@ impl std::error::Error for KindleForegroundError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::DisplayMode(error) => Some(error),
+            Self::Lightbox(error) => Some(error),
             Self::StockRepaint(error) => Some(error),
             _ => None,
         }

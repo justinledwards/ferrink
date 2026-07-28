@@ -8,6 +8,9 @@ target_dir=$repo_dir/target/armv7-unknown-linux-musleabihf/release
 probe=$target_dir/ferrink-probe
 guardian=$target_dir/ferrink-shell-guardian-kindle
 shell=$target_dir/ferrink-shell-kindle
+font=
+font_sha=4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf
+font_size=879708
 profile=${FERRINK_DEVICE_PROFILE:-}
 boot=$repo_dir/packaging/kindle/ferrink-boot
 job=$repo_dir/packaging/kindle/ferrink.conf
@@ -59,6 +62,18 @@ validate_local_inputs() {
     esac
     [ "${#stock_gui_sha}" -eq 64 ] \
         || die 'FERRINK_STOCK_GUI_SHA256 must be 64 lowercase hexadecimal characters'
+}
+
+find_reviewed_font() {
+    for candidate in \
+        "$target_dir"/build/ferrink-shell-*/out/ferrink-assets/InterVariable.ttf
+    do
+        [ -f "$candidate" ] || continue
+        [ "$(stat -f '%z' "$candidate")" = "$font_size" ] || continue
+        [ "$(shasum -a 256 "$candidate" | awk '{print $1}')" = "$font_sha" ] || continue
+        font=$candidate
+    done
+    [ -n "$font" ] || die 'missing reviewed font asset; run the ARM cargo-zigbuild first'
 }
 
 command=${1:-help}
@@ -159,6 +174,7 @@ REMOTE
         validate_arm_artifact "$probe"
         validate_arm_artifact "$guardian"
         validate_arm_artifact "$shell"
+        find_reviewed_font
         [ -x "$boot" ] || die "boot dispatcher is not executable: $boot"
         [ -f "$job" ] || die "missing Upstart job: $job"
         sh -n "$boot"
@@ -180,6 +196,7 @@ REMOTE
         cp "$probe" "$package_dir/ferrink-probe"
         cp "$guardian" "$package_dir/ferrink-shell-guardian-kindle"
         cp "$shell" "$package_dir/ferrink-shell-kindle"
+        cp "$font" "$package_dir/InterVariable.ttf"
         cp "$profile" "$package_dir/device-profile.toml"
         cp "$boot" "$package_dir/ferrink-boot"
         cp "$job" "$package_dir/ferrink.conf"
@@ -189,12 +206,14 @@ REMOTE
             "$package_dir/ferrink-shell-kindle" \
             "$package_dir/ferrink-boot"
         chmod 644 "$package_dir/device-profile.toml" "$package_dir/ferrink.conf"
+        chmod 644 "$package_dir/InterVariable.ttf"
         (
             cd "$package_dir"
             shasum -a 256 \
                 ferrink-probe \
                 ferrink-shell-guardian-kindle \
                 ferrink-shell-kindle \
+                InterVariable.ttf \
                 device-profile.toml \
                 ferrink-boot \
                 ferrink.conf >SHA256SUMS
@@ -212,26 +231,38 @@ REMOTE
             "$version" \
             "$operation" \
             "$stock_gui_sha" \
-            "$job_sha" <<'REMOTE'
+            "$job_sha" \
+            "$font_sha" \
+            "$font_size" <<'REMOTE'
 set -eu
 stage=$1
 version=$2
 operation=$3
 expected_original=$4
 expected_job=$5
+expected_font=$6
+expected_font_size=$7
 root=/var/local/ferrink
 version_dir=$root/versions/$version
 candidate=$root/active-version.candidate.$$
+font_dir=$root/assets
+font_target=$font_dir/InterVariable.ttf
+font_candidate=$font_dir/.InterVariable.ttf-$$.candidate
 
 cleanup_candidate() {
     rm -f "$candidate"
+    rm -f "$font_candidate"
 }
 trap cleanup_candidate EXIT HUP INT TERM
 
 [ -d "$stage" ] && [ ! -L "$stage" ]
 (cd "$stage" && sha256sum -c SHA256SUMS)
+[ -f "$stage/InterVariable.ttf" ] && [ ! -L "$stage/InterVariable.ttf" ]
+[ "$(stat -c '%s' "$stage/InterVariable.ttf")" = "$expected_font_size" ]
+[ "$(sha256sum "$stage/InterVariable.ttf" | awk '{print $1}')" = "$expected_font" ]
 [ ! -e "$version_dir" ] || { printf 'version already exists: %s\n' "$version_dir" >&2; exit 2; }
 [ ! -e "$root" ] || { [ -d "$root" ] && [ ! -L "$root" ]; }
+[ ! -e "$font_dir" ] || { [ -d "$font_dir" ] && [ ! -L "$font_dir" ]; }
 
 if [ "$operation" = update ]; then
     backup=$root/install-state/lab126_gui.conf.original
@@ -254,8 +285,16 @@ else
     [ "$(sha256sum /etc/init/lab126_gui.conf | awk '{print $1}')" = "$expected_original" ]
 fi
 
-mkdir -p "$root/versions" "$root/state" "$root/install-state"
+mkdir -p "$root/versions" "$root/state" "$root/install-state" "$font_dir"
 chmod 700 "$root" "$root/versions" "$root/state" "$root/install-state"
+chmod 755 "$font_dir"
+[ ! -L "$font_target" ]
+[ ! -e "$font_target" ] || [ -f "$font_target" ]
+mv "$stage/InterVariable.ttf" "$font_candidate"
+chmod 644 "$font_candidate"
+[ "$(stat -c '%s' "$font_candidate")" = "$expected_font_size" ]
+[ "$(sha256sum "$font_candidate" | awk '{print $1}')" = "$expected_font" ]
+mv "$font_candidate" "$font_target"
 mv "$stage" "$version_dir"
 chmod 700 "$version_dir"
 
@@ -286,7 +325,7 @@ REMOTE
             exit 0
         fi
 
-        "$kindle" script "$original_gui_sha" "$job_sha" <<'REMOTE'
+        "$kindle" script "$stock_gui_sha" "$job_sha" <<'REMOTE'
 set -eu
 expected_original=$1
 expected_job=$2

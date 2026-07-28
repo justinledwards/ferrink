@@ -6,24 +6,28 @@ repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
 kindle="$tool_dir/kindle"
 artifact="$repo_dir/target/armv7-unknown-linux-musleabihf/release/ferrink-shell-kindle"
 guardian_artifact="$repo_dir/target/armv7-unknown-linux-musleabihf/release/ferrink-shell-guardian-kindle"
+font_asset=
+font_asset_hash=4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf
+font_asset_size=879708
 background_asset="$repo_dir/docs/design/launcher-background-topography-6shade.png"
 label=deploy
 
 usage() {
     cat <<'EOF'
 usage: tools/deploy-kindle-shell [--artifact PATH] [--guardian-artifact PATH]
+                                 [--font-asset PATH]
                                  [--background-asset PATH]
                                  [--label NAME]
 
 Stages one reviewed ARM shell in a new /mnt/us directory, creates a fresh
 passive report, verifies the shell and guardian hashes, atomically installs the
-reviewed optional launcher backgrounds, enters from either exact healthy stock
-or the exact current manual/boot-managed guardian, launches the replacement,
-and verifies guardian/shell readiness.
+reviewed root-local shell font and optional launcher backgrounds, enters from
+either exact healthy stock or the exact current manual/boot-managed guardian,
+launches the replacement, and verifies guardian/shell readiness.
 
 This command does not build, modify boot configuration, retry a failed launch,
 remove old run directories, or overwrite an existing run path. Each managed
-background file is replaced atomically after exact validation.
+asset is replaced atomically after exact validation.
 EOF
 }
 
@@ -42,6 +46,11 @@ while [ "$#" -gt 0 ]; do
         --guardian-artifact)
             [ "$#" -ge 2 ] || { printf '%s\n' '--guardian-artifact requires a path' >&2; exit 2; }
             guardian_artifact=$2
+            shift 2
+            ;;
+        --font-asset)
+            [ "$#" -ge 2 ] || { printf '%s\n' '--font-asset requires a path' >&2; exit 2; }
+            font_asset=$2
             shift 2
             ;;
         --label)
@@ -68,9 +77,23 @@ case "$label" in
         ;;
 esac
 
+if [ -z "$font_asset" ]; then
+    for candidate in \
+        "$repo_dir"/target/armv7-unknown-linux-musleabihf/release/build/ferrink-shell-*/out/ferrink-assets/InterVariable.ttf
+    do
+        [ -f "$candidate" ] || continue
+        [ "$(stat -f '%z' "$candidate")" = "$font_asset_size" ] || continue
+        [ "$(shasum -a 256 "$candidate" | awk '{print $1}')" = "$font_asset_hash" ] \
+            || continue
+        font_asset=$candidate
+    done
+fi
+
 [ -f "$artifact" ] || { printf 'missing artifact: %s\n' "$artifact" >&2; exit 2; }
 [ -f "$guardian_artifact" ] \
     || { printf 'missing guardian artifact: %s\n' "$guardian_artifact" >&2; exit 2; }
+[ -n "$font_asset" ] && [ -f "$font_asset" ] \
+    || { printf '%s\n' 'missing reviewed font asset; run the ARM cargo-zigbuild first' >&2; exit 2; }
 [ -f "$background_asset" ] \
     || { printf 'missing background asset: %s\n' "$background_asset" >&2; exit 2; }
 file "$artifact" | grep -q 'ELF 32-bit LSB executable, ARM, EABI5'
@@ -84,6 +107,12 @@ artifact_hash=$(shasum -a 256 "$artifact" | awk '{print $1}')
 artifact_size=$(stat -f '%z' "$artifact")
 guardian_hash=$(shasum -a 256 "$guardian_artifact" | awk '{print $1}')
 guardian_size=$(stat -f '%z' "$guardian_artifact")
+observed_font_hash=$(shasum -a 256 "$font_asset" | awk '{print $1}')
+observed_font_size=$(stat -f '%z' "$font_asset")
+[ "$observed_font_hash" = "$font_asset_hash" ] \
+    || { printf '%s\n' 'font asset hash does not match reviewed Inter Variable' >&2; exit 2; }
+[ "$observed_font_size" = "$font_asset_size" ] \
+    || { printf '%s\n' 'font asset size does not match reviewed Inter Variable' >&2; exit 2; }
 background_hash=$(shasum -a 256 "$background_asset" | awk '{print $1}')
 background_size=$(stat -f '%z' "$background_asset")
 [ "$background_size" -gt 0 ] && [ "$background_size" -le 1048576 ] \
@@ -91,6 +120,7 @@ background_size=$(stat -f '%z' "$background_asset")
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 new_run="/mnt/us/ferrink-${label}-${stamp}"
 background_dir=/mnt/us/ferrink/backgrounds
+font_dir=/var/local/ferrink/assets
 active_file=$(mktemp -t ferrink-deploy-active.XXXXXX)
 trap 'rm -f "$active_file"' EXIT HUP INT TERM
 
@@ -169,6 +199,53 @@ done
 printf '%s|%s|%s|%s|%s\n' "$origin" "$pid" "$start" "$run" "$startup_mode"
 REMOTE
 IFS='|' read -r origin old_pid old_start old_run startup_mode <"$active_file"
+
+font_target=$font_dir/InterVariable.ttf
+font_stage=$font_dir/.InterVariable.ttf-$stamp-$$.stage
+"$kindle" script "$font_dir" "$font_target" "$font_stage" <<'REMOTE'
+set -eu
+directory=$1
+target=$2
+stage=$3
+root=/var/local/ferrink
+[ -d "$root" ] && [ ! -L "$root" ] \
+    || { printf '%s\n' 'Ferrink root is not a safe directory' >&2; exit 2; }
+if [ -e "$directory" ]; then
+    [ -d "$directory" ] && [ ! -L "$directory" ] \
+        || { printf '%s\n' 'font asset path is not a safe directory' >&2; exit 2; }
+else
+    mkdir "$directory"
+    chmod 755 "$directory"
+fi
+[ ! -e "$stage" ] \
+    || { printf 'refusing existing font stage: %s\n' "$stage" >&2; exit 2; }
+[ ! -L "$target" ] \
+    || { printf '%s\n' 'font target must not be a symlink' >&2; exit 2; }
+[ ! -e "$target" ] || [ -f "$target" ] \
+    || { printf '%s\n' 'font target must be a regular file' >&2; exit 2; }
+REMOTE
+
+"$kindle" push "$font_asset" "$font_stage"
+
+"$kindle" script \
+    "$font_stage" "$font_target" "$font_asset_hash" "$font_asset_size" <<'REMOTE'
+set -eu
+stage=$1
+target=$2
+expected_hash=$3
+expected_size=$4
+trap 'rm -f "$stage"' EXIT HUP INT TERM
+[ -f "$stage" ] && [ ! -L "$stage" ] \
+    || { printf '%s\n' 'font stage is not a safe regular file' >&2; exit 2; }
+[ "$(stat -c '%s' "$stage")" = "$expected_size" ] \
+    || { printf '%s\n' 'font stage size mismatch' >&2; exit 2; }
+[ "$(sha256sum "$stage" | awk '{print $1}')" = "$expected_hash" ] \
+    || { printf '%s\n' 'font stage hash mismatch' >&2; exit 2; }
+chmod 644 "$stage"
+mv "$stage" "$target"
+trap - EXIT HUP INT TERM
+sync
+REMOTE
 
 "$kindle" script "$old_run" "$new_run" <<'REMOTE'
 set -eu
@@ -395,7 +472,8 @@ printf 'run=%s\nreport_sha256=%s\nguardian_pid=%s\nshell_pid=%s\nshell_sha256=%s
     "$new_guardian" "$new_shell" "$observed_hash" "$observed_guardian_hash"
 REMOTE
 
-printf 'artifact_size=%s\nartifact_sha256=%s\nguardian_size=%s\nguardian_sha256=%s\nbackground_size=%s\nbackground_sha256=%s\n' \
+printf 'artifact_size=%s\nartifact_sha256=%s\nguardian_size=%s\nguardian_sha256=%s\nfont_size=%s\nfont_sha256=%s\nbackground_size=%s\nbackground_sha256=%s\n' \
     "$artifact_size" "$artifact_hash" "$guardian_size" "$guardian_hash" \
+    "$font_asset_size" "$font_asset_hash" \
     "$background_size" "$background_hash"
 "$kindle" state

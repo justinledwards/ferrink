@@ -141,18 +141,19 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     use ferrink_manifest::{ApplicationCatalog, MAX_APPLICATIONS, ValidatedApplicationManifest};
     use ferrink_platform::{
         DeviceProfile, Gray8Conversion, LogicalTouchPhase, ProbeReport, RefreshCompletionPolicy,
-        RefreshMode, ResolvedRuntimeDevice,
+        RefreshMode, RefreshRegion, ResolvedRuntimeDevice,
     };
     use ferrink_platform_kindle::{
-        BoundedInputPump, ExclusiveInputSession, InputLoopLimits, InputPumpOutcome, L0DisplayCore,
+        BoundedInputPump, ExclusiveInputSession, InputLoopLimits, InputPumpOutcome,
+        Koa3LightboxController, Koa3LightboxState, Koa3LightboxTransition, L0DisplayCore,
         L0InputCore, LinuxForegroundDisplayTarget, LinuxReadOnlyDeviceIo, LinuxReadOnlyFramebuffer,
-        LinuxReadOnlyInput, SlintFrameBuffer, SlintPointerBridge, new_slint_window,
-        revalidate_read_only,
+        LinuxReadOnlyInput, SlintFrameBuffer, SlintPointerBridge, SlintPresentOutcome,
+        new_slint_window, revalidate_read_only,
     };
     use ferrink_shell::{
         KindleShellDevicePort, ShellController, ShellProfile, ShellWindow,
         configure_application_catalog, configure_shell_window, install_device_handlers,
-        install_shell_font, install_shell_handlers, sync_shell_ui,
+        install_quick_settings_observer, install_shell_font, install_shell_handlers, sync_shell_ui,
     };
     use slint::ComponentHandle;
     use slint::platform::{Platform, PlatformError, WindowAdapter};
@@ -270,6 +271,14 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         pointer: SlintPointerBridge,
         readiness: Option<File>,
         diagnostics: InputDiagnostics,
+        lightbox: Koa3LightboxController,
+        quick_settings_intent: Rc<Cell<QuickSettingsIntent>>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum QuickSettingsIntent {
+        Closed,
+        Open { foreground_height: i32 },
     }
 
     #[derive(Debug, Default)]
@@ -317,6 +326,11 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             let loop_result = self.run_loop(window, exit_requested);
             self.pump.stop();
             let pointer_result = self.pointer.stop(window.window()).map_err(platform_error);
+            let lightbox_result = self
+                .lightbox
+                .clear_for_handoff(&mut self.target)
+                .map(|_| ())
+                .map_err(platform_error);
 
             let Self {
                 exclusive, target, ..
@@ -326,6 +340,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
 
             loop_result?;
             pointer_result?;
+            lightbox_result?;
             release_result?;
             close_result?;
             Ok(())
@@ -396,26 +411,69 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             window: &slint::platform::software_renderer::MinimalSoftwareWindow,
             first_frame: &mut bool,
         ) -> Result<(), PlatformError> {
-            let mode = if *first_frame {
+            let desired_lightbox = match self.quick_settings_intent.get() {
+                QuickSettingsIntent::Closed => Koa3LightboxState::Clear,
+                QuickSettingsIntent::Open { foreground_height } => {
+                    let foreground_height = u32::try_from(foreground_height).map_err(|_| {
+                        PlatformError::Other(
+                            "quick-settings foreground height is not positive".to_owned(),
+                        )
+                    })?;
+                    let visible = self.display.layout().visible();
+                    let region =
+                        RefreshRegion::try_new(0, 0, visible.width(), foreground_height, visible)
+                            .map_err(|_| {
+                            PlatformError::Other(
+                                "quick-settings foreground region left the display".to_owned(),
+                            )
+                        })?;
+                    Koa3LightboxState::Foreground(region)
+                }
+            };
+            let transition = self
+                .lightbox
+                .prepare(&mut self.target, desired_lightbox)
+                .map_err(platform_error)?;
+            let transition_prepared = matches!(transition, Koa3LightboxTransition::Prepared(_));
+            let mode = if *first_frame || transition_prepared {
                 RefreshMode::Full
             } else {
                 RefreshMode::Partial
             };
-            let outcome = self
-                .frame
-                .present_if_needed(
-                    window,
-                    &mut self.display,
-                    &mut self.target,
-                    mode,
-                    RefreshCompletionPolicy::DoNotWait,
-                    Gray8Conversion::Grayscale,
-                )
-                .map_err(platform_error)?;
-            if matches!(
-                outcome,
-                ferrink_platform_kindle::SlintPresentOutcome::Presented { .. }
+            let outcome = match self.frame.present_if_needed(
+                window,
+                &mut self.display,
+                &mut self.target,
+                mode,
+                RefreshCompletionPolicy::DoNotWait,
+                Gray8Conversion::Grayscale,
             ) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    let cleanup = self.lightbox.clear_for_handoff(&mut self.target);
+                    return Err(PlatformError::Other(match cleanup {
+                        Ok(_) => error.to_string(),
+                        Err(cleanup_error) => {
+                            format!("{error}; lightbox cleanup also failed: {cleanup_error}")
+                        }
+                    }));
+                }
+            };
+            if transition_prepared {
+                if !matches!(outcome, SlintPresentOutcome::Presented { .. }) {
+                    let cleanup = self.lightbox.clear_for_handoff(&mut self.target);
+                    return Err(PlatformError::Other(match cleanup {
+                        Ok(_) => "lightbox transition had no full Slint frame".to_owned(),
+                        Err(error) => format!(
+                            "lightbox transition had no full Slint frame; cleanup failed: {error}"
+                        ),
+                    }));
+                }
+                self.lightbox.commit_presented().map_err(|_| {
+                    PlatformError::Other("lightbox transition lost pending state".to_owned())
+                })?;
+            }
+            if matches!(outcome, SlintPresentOutcome::Presented { .. }) {
                 *first_frame = false;
             }
             Ok(())
@@ -505,6 +563,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     let window = new_slint_window();
     let exit_requested = Rc::new(Cell::new(false));
     let command_request = Rc::new(Cell::new(None));
+    let quick_settings_intent = Rc::new(Cell::new(QuickSettingsIntent::Closed));
     slint::platform::set_platform(Box::new(KindlePlatform {
         window,
         runtime: RefCell::new(Some(RuntimeState {
@@ -517,6 +576,8 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             pointer: SlintPointerBridge::default(),
             readiness,
             diagnostics: InputDiagnostics::default(),
+            lightbox: Koa3LightboxController::default(),
+            quick_settings_intent: Rc::clone(&quick_settings_intent),
         })),
         exit_requested: Rc::clone(&exit_requested),
         started: Instant::now(),
@@ -534,6 +595,13 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     }));
     sync_shell_ui(&ui, &controller.borrow());
     install_shell_handlers(&ui, &controller, &command_port);
+    install_quick_settings_observer(&ui, move |open, foreground_height| {
+        quick_settings_intent.set(if open {
+            QuickSettingsIntent::Open { foreground_height }
+        } else {
+            QuickSettingsIntent::Closed
+        });
+    });
     let _device_binding = install_device_handlers(&ui, KindleShellDevicePort::open());
     ui.run()?;
     let request = command_request
