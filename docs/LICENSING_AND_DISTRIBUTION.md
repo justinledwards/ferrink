@@ -44,3 +44,15 @@ idea-only reference listed in [ACKNOWLEDGMENTS.md](../ACKNOWLEDGMENTS.md).
 - run `tools/audit-public-source` and a secret scan; and
 - never include device configuration, captured reports, screenshots, document
   data, or application credentials.
+
+## Optional KOReader library updater
+
+Ferrink's KOReader plugin is project source under GPL-3.0-only and runs inside
+AGPL-3.0-only KOReader. Its userspace-networking design was informed by the
+MIT-licensed `koreader-tailscale` project, but Ferrink does not copy or bundle
+that plugin.
+
+The installer fetches pinned, unmodified official Tailscale and rclone ARMv7
+release binaries into ignored local and device paths after SHA-256
+verification. They are not stored in this repository and retain their upstream
+copyright and license terms.

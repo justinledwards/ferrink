@@ -1,0 +1,602 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+kindle_target=${KINDLE_TARGET:-reader}
+source_host=${LIBRARY_SOURCE_SSH:-}
+source_root=${LIBRARY_SOURCE_ROOT:-}
+source_user=${LIBRARY_SOURCE_USER:-${source_host%%@*}}
+source_port=${LIBRARY_SOURCE_PORT:-22}
+
+rclone_version=1.74.4
+rclone_archive_hash=75844809d25d2534da96220727e7746a300e30ec8c676ca98c47affe5a752e7b
+rclone_binary_hash=a01364ca8c6a6ee59771f9bcdfdefc12ba85f3567892999f642df4fb4c9c81bc
+tailscale_version=1.98.9
+tailscale_archive_hash=2269fd75206e438d4e56e7d8ae1f48def6a3b1c00717664c861108bdd7fa1e33
+tailscale_binary_hash=a371b0f4527b442121d5494f61f44056c5ff95a692748e6baab47c42c8d632c4
+tailscaled_binary_hash=b90475b0f27e28743f8a1dfeef627944bbfbcd1492f3a6cf650a7c82c9b89b00
+
+reference_dir=$repo_dir/target/reference
+rclone_dir=$reference_dir/rclone-v$rclone_version
+rclone_archive=$rclone_dir/rclone.zip
+rclone_binary=$rclone_dir/rclone-v$rclone_version-linux-arm-v7/rclone
+tailscale_dir=$reference_dir/tailscale-$tailscale_version-arm
+tailscale_archive=$tailscale_dir/tailscale_${tailscale_version}_arm.tgz
+tailscale_binary=$tailscale_dir/tailscale_${tailscale_version}_arm/tailscale
+tailscaled_binary=$tailscale_dir/tailscale_${tailscale_version}_arm/tailscaled
+plugin_dir=$repo_dir/apps/org.koreader.reader/ferrinksync.koplugin
+
+usage() {
+    cat <<'EOF'
+usage: tools/install-koreader-library-sync COMMAND [ARGS...]
+
+Commands:
+  install NAME=SOURCE [...]  install/update the plugin and private endpoint
+  enroll                    start one-time Tailscale device enrollment
+  finish-enrollment         verify enrollment and stop the setup connection
+  status                    report setup and process state without identities
+  verify-binaries           fetch/verify the pinned ARMv7 tools locally
+
+Each install mapping places Markdown files from SOURCE beneath the restricted
+library root into /mnt/us/documents/NAME. Example:
+
+  LIBRARY_SOURCE_SSH=reader@library-host \
+  LIBRARY_SOURCE_ROOT=/srv/private-library \
+    tools/install-koreader-library-sync install \
+    stories=stories/chapters/markdown
+
+Environment:
+  KINDLE_TARGET        tools/kindle alias (default: reader)
+  LIBRARY_SOURCE_SSH   SSH endpoint already on Tailscale (install requires it)
+  LIBRARY_SOURCE_ROOT  absolute read-only root (install requires it)
+  LIBRARY_SOURCE_USER  SFTP user (normally inferred from SOURCE_SSH)
+  LIBRARY_SOURCE_PORT  tailnet OpenSSH port (default: 22)
+  TAILSCALE_AUTH_KEY_FILE  optional one-time auth key used by enroll
+
+Install and sync are add/update-only. They never delete Kindle books.
+EOF
+}
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 2
+}
+
+kindle() {
+    KINDLE_TARGET=$kindle_target "$tool_dir/kindle" "$@"
+}
+
+sha256() {
+    shasum -a 256 "$1" | cut -d' ' -f1
+}
+
+require_hash() {
+    expected=$1
+    path=$2
+    [ -f "$path" ] || die "missing file: $path"
+    actual=$(sha256 "$path")
+    [ "$actual" = "$expected" ] || die "checksum mismatch: $path"
+}
+
+download_verified() {
+    url=$1
+    expected=$2
+    output=$3
+    if [ -f "$output" ]; then
+        require_hash "$expected" "$output"
+        return
+    fi
+
+    partial=$output.download.$$
+    trap 'rm -f "$partial"' 0 HUP INT TERM
+    curl --fail --location --silent --show-error --output "$partial" "$url"
+    require_hash "$expected" "$partial"
+    mv "$partial" "$output"
+    trap - 0 HUP INT TERM
+}
+
+prepare_binaries() {
+    mkdir -p "$rclone_dir" "$tailscale_dir"
+    download_verified \
+        "https://downloads.rclone.org/v$rclone_version/rclone-v$rclone_version-linux-arm-v7.zip" \
+        "$rclone_archive_hash" \
+        "$rclone_archive"
+    download_verified \
+        "https://pkgs.tailscale.com/stable/tailscale_${tailscale_version}_arm.tgz" \
+        "$tailscale_archive_hash" \
+        "$tailscale_archive"
+
+    if [ ! -f "$rclone_binary" ]; then
+        unzip -q "$rclone_archive" -d "$rclone_dir"
+    fi
+    if [ ! -f "$tailscale_binary" ] || [ ! -f "$tailscaled_binary" ]; then
+        tar -xzf "$tailscale_archive" -C "$tailscale_dir"
+    fi
+
+    require_hash "$rclone_binary_hash" "$rclone_binary"
+    require_hash "$tailscale_binary_hash" "$tailscale_binary"
+    require_hash "$tailscaled_binary_hash" "$tailscaled_binary"
+}
+
+validate_install_args() {
+    [ "$#" -gt 0 ] || die "install requires at least one NAME=SOURCE mapping"
+    [ -n "$source_host" ] || die "install requires LIBRARY_SOURCE_SSH"
+    [ -n "$source_root" ] || die "install requires LIBRARY_SOURCE_ROOT"
+    case $source_root in
+        /*) ;;
+        *) die "LIBRARY_SOURCE_ROOT must be an absolute path" ;;
+    esac
+    case $source_root in
+        *[!A-Za-z0-9._/-]*) die "LIBRARY_SOURCE_ROOT contains unsupported characters" ;;
+    esac
+    case $source_user in
+        ''|*[!A-Za-z0-9._-]*) die "LIBRARY_SOURCE_USER is invalid" ;;
+    esac
+    case $source_port in
+        ''|*[!0-9]*) die "LIBRARY_SOURCE_PORT must be a TCP port" ;;
+    esac
+    [ "${#source_port}" -le 5 ] &&
+        [ "$source_port" -ge 1 ] &&
+        [ "$source_port" -le 65535 ] ||
+        die "LIBRARY_SOURCE_PORT must be between 1 and 65535"
+
+    for mapping do
+        case $mapping in
+            *=*) ;;
+            *) die "invalid mapping (expected NAME=SOURCE): $mapping" ;;
+        esac
+        name=${mapping%%=*}
+        source=${mapping#*=}
+        case $name in
+            ''|*[!A-Za-z0-9._-]*) die "invalid destination name: $name" ;;
+        esac
+        case $source in
+            ''|/*|*..*|*[!A-Za-z0-9._/-]*) die "invalid source path: $source" ;;
+        esac
+    done
+}
+
+preflight_sources() {
+    ssh -T "$source_host" sh -s -- "$source_root" "$@" <<'REMOTE'
+set -eu
+root=$1
+shift
+command -v rclone >/dev/null
+command -v tailscale >/dev/null
+for mapping do
+    source=${mapping#*=}
+    directory=$root/$source
+    [ -d "$directory" ] || {
+        printf 'missing source: %s\n' "$directory" >&2
+        exit 1
+    }
+    count=$(find "$directory" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
+    [ "$count" -gt 0 ] || {
+        printf 'no Markdown files: %s\n' "$directory" >&2
+        exit 1
+    }
+done
+REMOTE
+}
+
+install_payload() {
+    stage=/mnt/us/ferrink/library-sync-stage-v1
+    meta_hash=$(sha256 "$plugin_dir/_meta.lua")
+    main_hash=$(sha256 "$plugin_dir/main.lua")
+    sync_hash=$(sha256 "$plugin_dir/sync-library.sh")
+
+    kindle run mkdir -p "$stage"
+
+    stage_binary() {
+        local_path=$1
+        installed_path=$2
+        staged_name=$3
+        expected_hash=$4
+        installed_hash=$(kindle run sha256sum "$installed_path" 2>/dev/null | cut -d' ' -f1) || installed_hash=
+        if [ "$installed_hash" = "$expected_hash" ]; then
+            kindle run cp "$installed_path" "$stage/$staged_name"
+        else
+            kindle rsync --partial --inplace \
+                "$local_path" \
+                "$kindle_target:$stage/$staged_name"
+        fi
+    }
+
+    stage_binary \
+        "$rclone_binary" \
+        /mnt/us/ferrink/tools/rclone-v1.74.4-armv7 \
+        rclone \
+        "$rclone_binary_hash"
+    staged_archive_hash=$(kindle run sha256sum "$stage/tailscale.tgz" 2>/dev/null | cut -d' ' -f1) || staged_archive_hash=
+    if [ "$staged_archive_hash" != "$tailscale_archive_hash" ]; then
+        kindle rsync --partial --inplace \
+            "$tailscale_archive" \
+            "$kindle_target:$stage/tailscale.tgz"
+    fi
+    kindle push "$plugin_dir/_meta.lua" "$stage/_meta.lua"
+    kindle push "$plugin_dir/main.lua" "$stage/main.lua"
+    kindle push "$plugin_dir/sync-library.sh" "$stage/sync-library.sh"
+
+    kindle script \
+        "$stage" \
+        "$rclone_binary_hash" \
+        "$tailscale_archive_hash" \
+        "$tailscale_binary_hash" \
+        "$tailscaled_binary_hash" \
+        "$meta_hash" \
+        "$main_hash" \
+        "$sync_hash" <<'REMOTE'
+set -eu
+stage=$1
+shift
+case $stage in
+    /mnt/us/ferrink/library-sync-stage-v1) ;;
+    *) printf 'unsafe staging path\n' >&2; exit 1 ;;
+esac
+
+expected=$1
+shift
+actual=$(sha256sum "$stage/rclone" | cut -d' ' -f1)
+[ "$actual" = "$expected" ] || {
+    printf 'staged checksum mismatch: rclone\n' >&2
+    exit 1
+}
+
+expected=$1
+shift
+actual=$(sha256sum "$stage/tailscale.tgz" | cut -d' ' -f1)
+[ "$actual" = "$expected" ] || {
+    printf 'staged checksum mismatch: tailscale.tgz\n' >&2
+    exit 1
+}
+tar -xzf "$stage/tailscale.tgz" -C "$stage"
+tailscale_archive_dir=$stage/tailscale_1.98.9_arm
+
+for name in tailscale tailscaled; do
+    expected=$1
+    shift
+    actual=$(sha256sum "$tailscale_archive_dir/$name" | cut -d' ' -f1)
+    [ "$actual" = "$expected" ] || {
+        printf 'staged checksum mismatch: %s\n' "$name" >&2
+        exit 1
+    }
+done
+
+for name in _meta.lua main.lua sync-library.sh; do
+    expected=$1
+    shift
+    actual=$(sha256sum "$stage/$name" | cut -d' ' -f1)
+    [ "$actual" = "$expected" ] || {
+        printf 'staged checksum mismatch: %s\n' "$name" >&2
+        exit 1
+    }
+done
+
+tools=/mnt/us/ferrink/tools
+plugin=/mnt/us/koreader/plugins/ferrinksync.koplugin
+mkdir -p "$tools" "$plugin"
+
+install_file() {
+    source=$1
+    destination=$2
+    mode=$3
+    pending=$destination.new.$$
+    cp "$source" "$pending"
+    chmod "$mode" "$pending"
+    mv "$pending" "$destination"
+}
+
+install_file "$stage/rclone" "$tools/rclone-v1.74.4-armv7" 755
+install_file "$tailscale_archive_dir/tailscale" "$tools/tailscale-v1.98.9-armv7" 755
+install_file "$tailscale_archive_dir/tailscaled" "$tools/tailscaled-v1.98.9-armv7" 755
+install_file "$stage/_meta.lua" "$plugin/_meta.lua" 644
+install_file "$stage/main.lua" "$plugin/main.lua" 644
+install_file "$stage/sync-library.sh" "$plugin/sync-library.sh" 755
+
+rm -rf "$stage"
+REMOTE
+}
+
+reader_public_key() {
+    kindle script <<'REMOTE'
+set -eu
+directory=/var/local/ferrink/library-sync
+private_key=$directory/id_rsa
+umask 077
+mkdir -p "$directory"
+chmod 700 "$directory"
+if [ ! -s "$private_key" ] || [ ! -s "$private_key.pub" ]; then
+    ssh-keygen -q -t rsa -b 3072 -N '' -C ferrink-koreader-sync -f "$private_key"
+fi
+chmod 600 "$private_key"
+chmod 644 "$private_key.pub"
+sed -n '1p' "$private_key.pub"
+REMOTE
+}
+
+authorize_reader() {
+    key_type=$1
+    key_blob=$2
+    ssh -T "$source_host" sh -s -- "$key_type" "$key_blob" "$source_root" <<'REMOTE'
+set -eu
+key_type=$1
+key_blob=$2
+root=$3
+marker=ferrink-koreader-sync
+authorized=$HOME/.ssh/authorized_keys
+entry="restrict,command=\"/usr/bin/rclone serve sftp --stdio --read-only $root\" $key_type $key_blob $marker"
+
+umask 077
+mkdir -p "$HOME/.ssh"
+touch "$authorized"
+chmod 600 "$authorized"
+if grep -q " $marker\$" "$authorized"; then
+    grep -F "$key_type $key_blob $marker" "$authorized" >/dev/null || {
+        printf 'a different Ferrink reader key is already authorized\n' >&2
+        exit 1
+    }
+else
+    printf '%s\n' "$entry" >>"$authorized"
+fi
+REMOTE
+}
+
+install_private_config() {
+    tail_ip=$1
+    source_port=$2
+    shift 2
+    kindle script "$tail_ip" "$source_port" "$source_user" "$@" <<'REMOTE'
+set -eu
+tail_ip=$1
+source_port=$2
+source_user=$3
+shift 3
+directory=/var/local/ferrink/library-sync
+config=$directory/rclone.conf
+collections=$directory/collections
+private_key=$directory/id_rsa
+umask 077
+mkdir -p "$directory"
+chmod 700 "$directory"
+
+config_new=$config.new.$$
+collections_new=$collections.new.$$
+{
+    printf '[library]\n'
+    printf 'type = sftp\n'
+    printf 'host = %s\n' "$tail_ip"
+    printf 'port = %s\n' "$source_port"
+    printf 'user = %s\n' "$source_user"
+    printf 'key_file = %s\n' "$private_key"
+    printf 'socks_proxy = 127.0.0.1:1055\n'
+    printf 'disable_hashcheck = true\n'
+    printf 'shell_type = none\n'
+} >"$config_new"
+: >"$collections_new"
+for mapping do
+    destination=${mapping%%=*}
+    source=${mapping#*=}
+    printf '%s|%s\n' "$destination" "$source" >>"$collections_new"
+done
+chmod 600 "$config_new" "$collections_new"
+mv "$config_new" "$config"
+mv "$collections_new" "$collections"
+rm -f "$directory/known_hosts"
+REMOTE
+}
+
+install() {
+    validate_install_args "$@"
+    printf 'Checking pinned sync binaries without invoking Cargo…\n'
+    prepare_binaries
+    printf 'Preflighting the read-only library sources…\n'
+    preflight_sources "$@"
+    kindle ping >/dev/null
+    printf 'Installing the verified KOReader plugin and ARM tools…\n'
+    install_payload
+
+    public_key=$(reader_public_key)
+    key_type=$(printf '%s\n' "$public_key" | cut -d' ' -f1)
+    key_blob=$(printf '%s\n' "$public_key" | cut -d' ' -f2)
+    case $key_type:$key_blob in
+        ssh-rsa:*) ;;
+        *) die "the Kindle returned an unexpected reader public key" ;;
+    esac
+    printf 'Authorizing one forced, read-only SFTP endpoint on the library host…\n'
+    authorize_reader "$key_type" "$key_blob"
+
+    tail_ip=$(ssh -T "$source_host" tailscale ip -4 | sed -n '1p')
+    case $tail_ip in
+        100.*) ;;
+        *) die "the library host did not return a Tailscale IPv4 address" ;;
+    esac
+    install_private_config "$tail_ip" "$source_port" "$@"
+    printf 'Installed. Run "%s enroll" once to join the Kindle to Tailscale.\n' "$0"
+}
+
+enroll() {
+    auth_key_file=${TAILSCALE_AUTH_KEY_FILE:-}
+    remote_auth_key=
+    if [ -n "$auth_key_file" ]; then
+        [ -f "$auth_key_file" ] || die "TAILSCALE_AUTH_KEY_FILE does not exist"
+        key_prefix=$(sed -n '1p' "$auth_key_file" | cut -c1-11)
+        [ "$key_prefix" = tskey-auth- ] || die "TAILSCALE_AUTH_KEY_FILE is not an auth key"
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        remote_auth_key=/var/local/ferrink/library-sync/auth-key.pending-$stamp
+        kindle push "$auth_key_file" "$remote_auth_key"
+        kindle run chmod 600 "$remote_auth_key"
+    fi
+
+    kindle script "$remote_auth_key" <<'REMOTE'
+set -eu
+auth_key_path=${1:-}
+directory=/var/local/ferrink/library-sync
+tools=/mnt/us/ferrink/tools
+tailscale=$tools/tailscale-v1.98.9-armv7
+tailscaled=$tools/tailscaled-v1.98.9-armv7
+state=$directory/tailscale-state
+socket=/tmp/ferrink-tailscaled-enroll.sock
+daemon_pid_file=/tmp/ferrink-tailscaled-enroll.pid
+up_pid_file=/tmp/ferrink-tailscale-up.pid
+log=/tmp/ferrink-tailscale-enroll.log
+lock=/tmp/ferrink-library-sync.lock
+cleanup_pending_key() {
+    case $auth_key_path in
+        '') ;;
+        /var/local/ferrink/library-sync/auth-key.pending-*) rm -f "$auth_key_path" ;;
+        *) printf 'setup=unsafe-auth-key-path\n' >&2; exit 1 ;;
+    esac
+}
+trap cleanup_pending_key 0
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[ -x "$tailscale" ] && [ -x "$tailscaled" ] || {
+    printf 'setup=incomplete\n'
+    exit 1
+}
+if [ -d "$lock" ]; then
+    if [ ! -s "$daemon_pid_file" ] || ! kill -0 "$(sed -n '1p' "$daemon_pid_file")" 2>/dev/null; then
+        printf 'setup=busy\n'
+        exit 1
+    fi
+else
+    mkdir "$lock" || {
+        printf 'setup=busy\n'
+        exit 1
+    }
+fi
+mkdir -p "$state"
+chmod 700 "$directory" "$state"
+if [ ! -s "$daemon_pid_file" ] || ! kill -0 "$(sed -n '1p' "$daemon_pid_file")" 2>/dev/null; then
+    SSL_CERT_FILE=/mnt/us/koreader/data/ca-bundle.crt \
+        "$tailscaled" \
+        --statedir="$state" \
+        --socket="$socket" \
+        --tun=userspace-networking \
+        --socks5-server=127.0.0.1:1055 \
+        --outbound-http-proxy-listen=127.0.0.1:1056 \
+        >"$log" 2>&1 &
+    printf '%s\n' "$!" >"$daemon_pid_file"
+fi
+attempt=0
+while [ ! -S "$socket" ]; do
+    [ "$attempt" -lt 10 ] || {
+        printf 'setup=daemon-failed\n'
+        exit 1
+    }
+    sleep 1
+    attempt=$((attempt + 1))
+done
+if "$tailscale" --socket="$socket" status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'; then
+    printf 'setup=already-enrolled\n'
+    exit 0
+fi
+if [ ! -s "$up_pid_file" ] || ! kill -0 "$(sed -n '1p' "$up_pid_file")" 2>/dev/null; then
+    if [ -n "$auth_key_path" ]; then
+        auth_key=$(sed -n '1p' "$auth_key_path")
+        case $auth_key in
+            tskey-auth-*) ;;
+            *) printf 'setup=invalid-auth-key\n'; exit 1 ;;
+        esac
+        SSL_CERT_FILE=/mnt/us/koreader/data/ca-bundle.crt \
+            "$tailscale" --socket="$socket" up \
+            --auth-key="$auth_key" \
+            --accept-dns=false \
+            --accept-routes=false \
+            --hostname=ferrink-reader \
+            --netfilter-mode=off \
+            --shields-up=true \
+            >"$log" 2>&1 &
+    else
+        SSL_CERT_FILE=/mnt/us/koreader/data/ca-bundle.crt \
+            "$tailscale" --socket="$socket" up \
+            --accept-dns=false \
+            --accept-routes=false \
+            --hostname=ferrink-reader \
+            --netfilter-mode=off \
+            --shields-up=true \
+            >"$log" 2>&1 &
+    fi
+    printf '%s\n' "$!" >"$up_pid_file"
+fi
+attempt=0
+while [ "$attempt" -lt 15 ]; do
+    auth_url=$(sed -n 's/^[[:space:]]*\(https:\/\/login\.tailscale\.com\/[^[:space:]]*\).*/\1/p' "$log" | sed -n '1p')
+    if [ -n "$auth_url" ]; then
+        printf 'auth_url=%s\n' "$auth_url"
+        exit 0
+    fi
+    if "$tailscale" --socket="$socket" status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'; then
+        printf 'setup=enrolled\n'
+        exit 0
+    fi
+    sleep 1
+    attempt=$((attempt + 1))
+done
+printf 'setup=auth-url-unavailable\n'
+exit 1
+REMOTE
+}
+
+finish_enrollment() {
+    kindle script <<'REMOTE'
+set -eu
+tools=/mnt/us/ferrink/tools
+tailscale=$tools/tailscale-v1.98.9-armv7
+socket=/tmp/ferrink-tailscaled-enroll.sock
+daemon_pid_file=/tmp/ferrink-tailscaled-enroll.pid
+up_pid_file=/tmp/ferrink-tailscale-up.pid
+lock=/tmp/ferrink-library-sync.lock
+if ! "$tailscale" --socket="$socket" status --json 2>/dev/null | grep -q '"BackendState"[[:space:]]*:[[:space:]]*"Running"'; then
+    printf 'setup=not-enrolled\n'
+    exit 1
+fi
+"$tailscale" --socket="$socket" down >/dev/null 2>&1 || true
+for pid_file in "$up_pid_file" "$daemon_pid_file"; do
+    if [ -s "$pid_file" ]; then
+        pid=$(sed -n '1p' "$pid_file")
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+done
+sleep 1
+rm -f "$up_pid_file" "$daemon_pid_file" /tmp/ferrink-tailscale-enroll.log "$socket"
+rmdir "$lock" 2>/dev/null || true
+printf 'setup=enrolled-and-stopped\n'
+REMOTE
+}
+
+status() {
+    kindle script <<'REMOTE'
+set -eu
+directory=/var/local/ferrink/library-sync
+printf 'plugin='
+[ -x /mnt/us/koreader/plugins/ferrinksync.koplugin/sync-library.sh ] && printf 'installed\n' || printf 'missing\n'
+printf 'config='
+[ -s "$directory/rclone.conf" ] && [ -s "$directory/collections" ] && printf 'installed\n' || printf 'missing\n'
+printf 'identity='
+[ -s "$directory/tailscale-state/tailscaled.state" ] && printf 'present\n' || printf 'missing\n'
+printf 'tailscaled_processes='
+pgrep tailscaled 2>/dev/null | wc -l | tr -d ' '
+printf 'rclone_processes='
+pgrep rclone 2>/dev/null | wc -l | tr -d ' '
+REMOTE
+}
+
+verify_binaries() {
+    prepare_binaries
+    printf 'Pinned rclone and Tailscale ARMv7 binaries verified.\n'
+}
+
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+case $command in
+    help|-h|--help) usage ;;
+    install) install "$@" ;;
+    enroll) [ "$#" -eq 0 ] || die "enroll takes no arguments"; enroll ;;
+    finish-enrollment) [ "$#" -eq 0 ] || die "finish-enrollment takes no arguments"; finish_enrollment ;;
+    status) [ "$#" -eq 0 ] || die "status takes no arguments"; status ;;
+    verify-binaries) [ "$#" -eq 0 ] || die "verify-binaries takes no arguments"; verify_binaries ;;
+    *) die "unknown command: $command" ;;
+esac
