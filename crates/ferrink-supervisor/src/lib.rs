@@ -128,6 +128,13 @@ pub trait ForegroundSystem {
     /// Waits for the exact bounded quiescence interval.
     fn quiesce(&mut self, duration: Duration) -> Result<(), Self::Error>;
 
+    /// Clears stale global display inversion before foreground rendering.
+    ///
+    /// Implementations must preserve every other live display field. This is
+    /// intentionally a normalization, not a restorable acquisition: returning
+    /// to a stale inverted state would corrupt both Ferrink and stock output.
+    fn normalize_display_mode(&mut self) -> Result<(), Self::Error>;
+
     /// Performs the separately reviewed stock repaint after restoration.
     fn repaint_stock(&mut self) -> Result<(), Self::Error>;
 }
@@ -149,6 +156,8 @@ pub enum ForegroundStage {
     TransitionProcess(ProcessIdentity, ProcessTransition),
     /// Wait for the stock stack to quiesce.
     Quiesce,
+    /// Normalize the global display mode before Ferrink renders.
+    NormalizeDisplayMode,
     /// Repaint stock after restoration.
     RepaintStock,
 }
@@ -451,6 +460,12 @@ pub fn acquire_foreground<S: ForegroundSystem>(
     mutate_or_rollback(system, &mut state, ForegroundStage::Quiesce, |system| {
         system.quiesce(FOREGROUND_QUIESCENCE)
     })?;
+    mutate_or_rollback(
+        system,
+        &mut state,
+        ForegroundStage::NormalizeDisplayMode,
+        ForegroundSystem::normalize_display_mode,
+    )?;
 
     Ok(ForegroundLease { state })
 }
@@ -524,6 +539,12 @@ pub fn acquire_early_boot_foreground<S: ForegroundSystem>(
     early_boot_mutate_or_rollback(system, &mut lease, ForegroundStage::Quiesce, |system| {
         system.quiesce(FOREGROUND_QUIESCENCE)
     })?;
+    early_boot_mutate_or_rollback(
+        system,
+        &mut lease,
+        ForegroundStage::NormalizeDisplayMode,
+        ForegroundSystem::normalize_display_mode,
+    )?;
     Ok(lease)
 }
 
@@ -787,6 +808,7 @@ mod tests {
         SetPillow(PillowState),
         Transition(ProcessIdentity, ProcessTransition),
         Quiesce(Duration),
+        NormalizeDisplayMode,
         Repaint,
     }
 
@@ -872,6 +894,10 @@ mod tests {
             self.record(Action::Quiesce(duration))
         }
 
+        fn normalize_display_mode(&mut self) -> Result<(), Self::Error> {
+            self.record(Action::NormalizeDisplayMode)
+        }
+
         fn repaint_stock(&mut self) -> Result<(), Self::Error> {
             self.record(Action::Repaint)
         }
@@ -899,6 +925,7 @@ mod tests {
                 Action::Transition(awesome, ProcessTransition::Stop),
                 Action::Transition(cvm, ProcessTransition::Stop),
                 Action::Quiesce(FOREGROUND_QUIESCENCE),
+                Action::NormalizeDisplayMode,
                 Action::Transition(cvm, ProcessTransition::Continue),
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPillow(PillowState::Enabled),
@@ -1012,6 +1039,45 @@ mod tests {
     }
 
     #[test]
+    fn display_mode_failure_restores_stock_without_restoring_stale_inversion() {
+        let mut system = FakeSystem {
+            fail_at: Some(Action::NormalizeDisplayMode),
+            ..FakeSystem::default()
+        };
+
+        let error = acquire_foreground(&mut system).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ForegroundAcquireError::Operation(ForegroundOperationError {
+                cause: StageFailure {
+                    stage: ForegroundStage::NormalizeDisplayMode,
+                    error: FakeError::Injected,
+                },
+                ref rollback_failures,
+            }) if rollback_failures.is_empty()
+        ));
+        assert_eq!(
+            &system.actions[system.actions.len() - 5..],
+            [
+                Action::Transition(system.cvm[0], ProcessTransition::Continue),
+                Action::Transition(system.awesome[0], ProcessTransition::Continue),
+                Action::SetPillow(PillowState::Enabled),
+                Action::SetPrevent(false),
+                Action::Repaint,
+            ]
+        );
+        assert_eq!(
+            system
+                .actions
+                .iter()
+                .filter(|action| matches!(action, Action::NormalizeDisplayMode))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn restoration_attempts_every_stage_and_retains_all_failures() {
         let mut system = FakeSystem::default();
         let lease = acquire_foreground(&mut system).unwrap();
@@ -1073,6 +1139,7 @@ mod tests {
                 Action::SetPrevent(true),
                 Action::Transition(awesome, ProcessTransition::Stop),
                 Action::Quiesce(FOREGROUND_QUIESCENCE),
+                Action::NormalizeDisplayMode,
                 Action::Transition(awesome, ProcessTransition::Continue),
                 Action::SetPrevent(false),
             ]

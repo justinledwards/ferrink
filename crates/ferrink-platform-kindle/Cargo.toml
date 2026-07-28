@@ -10,6 +10,7 @@ publish = false
 [features]
 default = []
 linux-device = ["dep:libc"]
+linux-display-mode = ["linux-device"]
 linux-foreground-display = ["linux-device"]
 linux-input-grab-card = ["linux-touch-read-card"]
 linux-touch-read-card = ["linux-device"]

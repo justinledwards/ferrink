@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use ferrink_platform::ResolvedRuntimeDevice;
-use ferrink_platform_kindle::{LinuxStockRepaintProcess, StockRepaintCore, StockRepaintError};
+use ferrink_platform_kindle::{
+    LinuxDisplayModeError, LinuxStockRepaintProcess, StockRepaintCore, StockRepaintError,
+    normalize_framebuffer_day_mode,
+};
 
 use crate::{
     FOREGROUND_QUIESCENCE, ForegroundSystem, PillowState, ProcessIdentity, ProcessTransition,
@@ -126,6 +129,7 @@ impl Drop for LinuxForegroundSignalGuard {
 #[derive(Debug)]
 pub struct LinuxKindleForegroundSystem {
     confirmed_pillow: PillowState,
+    runtime: ResolvedRuntimeDevice,
     repaint: StockRepaintCore,
 }
 
@@ -144,6 +148,7 @@ impl LinuxKindleForegroundSystem {
             .map_err(KindleForegroundError::StockRepaint)?;
         Ok(Self {
             confirmed_pillow,
+            runtime: device.clone(),
             repaint,
         })
     }
@@ -276,6 +281,12 @@ impl ForegroundSystem for LinuxKindleForegroundSystem {
         }
         std::thread::sleep(duration);
         Ok(())
+    }
+
+    fn normalize_display_mode(&mut self) -> Result<(), Self::Error> {
+        normalize_framebuffer_day_mode(&self.runtime)
+            .map(|_| ())
+            .map_err(KindleForegroundError::DisplayMode)
     }
 
     fn repaint_stock(&mut self) -> Result<(), Self::Error> {
@@ -593,6 +604,8 @@ pub enum KindleForegroundError {
     MissingChild(KindleCommand),
     /// The policy requested a different quiescence interval.
     InvalidQuiescence(Duration),
+    /// The global Kindle framebuffer mode could not be normalized.
+    DisplayMode(LinuxDisplayModeError),
     /// The promoted stock repaint failed.
     StockRepaint(StockRepaintError),
 }
@@ -669,6 +682,9 @@ impl std::fmt::Display for KindleForegroundError {
             Self::InvalidQuiescence(duration) => {
                 write!(formatter, "invalid foreground quiescence {duration:?}")
             }
+            Self::DisplayMode(error) => {
+                write!(formatter, "display-mode normalization failed: {error}")
+            }
             Self::StockRepaint(error) => write!(formatter, "stock repaint failed: {error}"),
         }
     }
@@ -677,6 +693,7 @@ impl std::fmt::Display for KindleForegroundError {
 impl std::error::Error for KindleForegroundError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::DisplayMode(error) => Some(error),
             Self::StockRepaint(error) => Some(error),
             _ => None,
         }
