@@ -13,6 +13,7 @@ linux-kindle-foreground = [
     "dep:ferrink-platform",
     "dep:ferrink-platform-kindle",
     "dep:libc",
+    "ferrink-platform-kindle/linux-display-mode",
     "ferrink-platform-kindle/linux-stock-repaint",
 ]
 koa3-foreground-card = [

@@ -1,0 +1,187 @@
+#!/bin/sh
+set -eu
+
+tool_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(CDPATH='' cd -- "$tool_dir/.." && pwd)
+sync_script=$repo_dir/apps/org.koreader.reader/ferrinksync.koplugin/sync-library.sh
+temporary_root=${FERRINK_TEST_TMPDIR:-/tmp}
+temporary_root=${temporary_root%/}
+[ -n "$temporary_root" ] || temporary_root=/
+test_root=$(mktemp -d "$temporary_root/ferrink-library-sync-test.XXXXXX")
+
+cleanup() {
+    case $test_root in
+        "$temporary_root"/ferrink-library-sync-test.*)
+            rm -rf -- "$test_root"
+            ;;
+        *)
+            printf 'refusing to remove unexpected test path: %s\n' "$test_root" >&2
+            return 1
+            ;;
+    esac
+}
+trap cleanup 0
+trap 'exit 1' HUP INT TERM
+
+fail() {
+    printf 'not ok - %s\n' "$*" >&2
+    exit 1
+}
+
+assert_contains() {
+    value=$1
+    expected=$2
+    case $value in
+        *"$expected"*) ;;
+        *) fail "expected output to contain: $expected" ;;
+    esac
+}
+
+fake_tools=$test_root/tools
+config_dir=$test_root/config
+documents_dir=$test_root/documents
+temporary_dir=$test_root/tmp
+mkdir -p "$fake_tools" "$config_dir" "$documents_dir" "$temporary_dir"
+
+cat >"$fake_tools/tailscaled-v1.98.9-armv7" <<'PYTHON'
+#!/usr/bin/env python3
+import os
+import signal
+import socket
+import sys
+import time
+
+socket_path = next(arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--socket="))
+pid_path = os.environ["FERRINK_TEST_DAEMON_PID"]
+with open(pid_path, "w", encoding="ascii") as pid_file:
+    pid_file.write(str(os.getpid()))
+
+running = True
+def stop(_signum, _frame):
+    global running
+    running = False
+
+signal.signal(signal.SIGTERM, stop)
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(socket_path)
+while running:
+    time.sleep(0.05)
+server.close()
+PYTHON
+
+cat >"$fake_tools/tailscale-v1.98.9-armv7" <<'SHELL'
+#!/bin/sh
+case " $* " in
+    *' up '*) exit 0 ;;
+    *' down '*) exit 0 ;;
+    *) exit 0 ;;
+esac
+SHELL
+
+cat >"$fake_tools/rclone-v1.74.4-armv7" <<'SHELL'
+#!/bin/sh
+printf '%s\n' "$*" >>"$FERRINK_TEST_RCLONE_LOG"
+case ${FERRINK_TEST_RCLONE_FAIL:-} in
+    '') exit 0 ;;
+    *) exit 1 ;;
+esac
+SHELL
+
+cat >"$fake_tools/busybox" <<'SHELL'
+#!/bin/sh
+[ "$1" = timeout ] || exit 2
+printf '%s\n' "$*" >>"$FERRINK_TEST_TIMEOUT_LOG"
+shift
+[ "$1" = -t ] || exit 2
+shift 2
+[ "$1" = -s ] || exit 2
+shift 2
+exec "$@"
+SHELL
+
+cat >"$fake_tools/ifconfig" <<'SHELL'
+#!/bin/sh
+printf 'lo: inet 127.0.0.1 netmask 255.0.0.0\n'
+SHELL
+chmod 755 "$fake_tools"/*
+
+printf '[library]\ntype = sftp\n' >"$config_dir/rclone.conf"
+printf 'stories|stories/chapters/markdown\nmore|more/chapters/markdown\n' >"$config_dir/collections"
+rclone_log=$test_root/rclone.log
+timeout_log=$test_root/timeout.log
+daemon_pid_file=$test_root/daemon.pid
+
+run_sync() {
+    env \
+        PATH="$fake_tools:$PATH" \
+        FERRINK_SYNC_CONFIG_DIR="$config_dir" \
+        FERRINK_SYNC_TOOLS_DIR="$fake_tools" \
+        FERRINK_SYNC_DOCUMENTS_DIR="$documents_dir" \
+        FERRINK_SYNC_TEMPORARY_DIR="$temporary_dir" \
+        FERRINK_SYNC_TIMEOUT_TOOL="$fake_tools/busybox" \
+        FERRINK_SYNC_BUDGET_SECONDS="${FERRINK_SYNC_BUDGET_SECONDS:-1800}" \
+        FERRINK_TEST_RCLONE_LOG="$rclone_log" \
+        FERRINK_TEST_TIMEOUT_LOG="$timeout_log" \
+        FERRINK_TEST_DAEMON_PID="$daemon_pid_file" \
+        FERRINK_TEST_RCLONE_FAIL="${FERRINK_TEST_RCLONE_FAIL:-}" \
+        "$sync_script"
+}
+
+mkdir "$temporary_dir/ferrink-library-sync.lock"
+set +e
+busy_output=$(run_sync 2>&1)
+busy_status=$?
+set -e
+[ "$busy_status" -ne 0 ] || fail 'concurrent update unexpectedly succeeded'
+printf '%s\n' "$busy_output" | grep -q 'already running' \
+    || fail 'concurrent update omitted its friendly error'
+[ -d "$temporary_dir/ferrink-library-sync.lock" ] \
+    || fail 'rejected concurrent update removed the active owner lock'
+rmdir "$temporary_dir/ferrink-library-sync.lock"
+
+output=$(run_sync)
+assert_contains "$output" 'Library update complete. Updated 2 collections.'
+[ "$(wc -l <"$rclone_log" | tr -d ' ')" -eq 2 ] || fail 'expected exactly two rclone calls'
+[ "$(wc -l <"$timeout_log" | tr -d ' ')" -eq 2 ] \
+    || fail 'expected every collection copy to use the bounded timeout helper'
+[ ! -d "$temporary_dir/ferrink-library-sync.lock" ] || fail 'success left the lock behind'
+daemon_pid=$(sed -n '1p' "$daemon_pid_file")
+if kill -0 "$daemon_pid" 2>/dev/null; then
+    fail 'success left tailscaled running'
+fi
+printf 'ok - successful sync is bounded and stops Tailscale\n'
+
+printf 'stories|stories/chapters/markdown\n' >"$config_dir/collections"
+: >"$rclone_log"
+mkdir -p "$documents_dir/stories"
+printf 'keep me\n' >"$documents_dir/stories/existing.md"
+set +e
+output=$(FERRINK_TEST_RCLONE_FAIL=1 run_sync)
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail 'failed rclone call reported success'
+assert_contains "$output" 'No books were deleted.'
+[ -f "$documents_dir/stories/existing.md" ] || fail 'failure removed an existing book'
+[ ! -d "$temporary_dir/ferrink-library-sync.lock" ] || fail 'failure left the lock behind'
+printf 'ok - transfer failure is add/update-only and cleans up\n'
+
+printf 'bad/name|stories/chapters/markdown\n' >"$config_dir/collections"
+: >"$rclone_log"
+set +e
+output=$(run_sync)
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail 'invalid destination reported success'
+assert_contains "$output" 'destination in the private settings is invalid'
+[ ! -s "$rclone_log" ] || fail 'invalid settings reached rclone'
+printf 'ok - private collection mappings are validated\n'
+
+: >"$rclone_log"
+set +e
+output=$(FERRINK_SYNC_BUDGET_SECONDS=invalid run_sync)
+status=$?
+set -e
+[ "$status" -ne 0 ] || fail 'invalid time limit reported success'
+assert_contains "$output" 'time limit is invalid'
+[ ! -s "$rclone_log" ] || fail 'invalid time limit reached rclone'
+printf 'ok - sync time limit is validated before transfer\n'

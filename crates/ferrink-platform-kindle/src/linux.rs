@@ -1,11 +1,17 @@
-//! Linux implementation limited to read-only metadata and nonblocking input.
+//! Linux metadata, nonblocking input, and opt-in display-mode normalization.
 
 use std::fs::{File, OpenOptions};
 use std::num::NonZeroI32;
 use std::os::fd::AsRawFd;
+#[cfg(feature = "linux-display-mode")]
+use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::OpenOptionsExt;
+#[cfg(feature = "linux-display-mode")]
+use std::path::Path;
 use std::time::Duration;
 
+#[cfg(feature = "linux-display-mode")]
+use ferrink_platform::ResolvedRuntimeDevice;
 use ferrink_platform::{
     FramebufferCapability, InputAxisCapability, InputDeviceId, PixelBitfield, PixelLayout,
     redact_text,
@@ -20,7 +26,13 @@ use crate::{
 };
 
 const FBIOGET_VSCREENINFO: libc::c_ulong = 0x4600;
+#[cfg(feature = "linux-display-mode")]
+const FBIOPUT_VSCREENINFO: libc::c_ulong = 0x4601;
 const FBIOGET_FSCREENINFO: libc::c_ulong = 0x4602;
+#[cfg(feature = "linux-display-mode")]
+const GRAYSCALE_8BIT: u32 = 1;
+#[cfg(feature = "linux-display-mode")]
+const GRAYSCALE_8BIT_INVERTED: u32 = 2;
 const INPUT_NAME_BYTES: usize = 129;
 #[cfg(feature = "linux-input-grab-card")]
 const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -145,6 +157,240 @@ pub(crate) fn query_framebuffer_capability(
         blue: variable.blue.into(),
         transparency: variable.transp.into(),
     })
+}
+
+/// Result of normalizing the kernel framebuffer to ordinary grayscale.
+#[cfg(feature = "linux-display-mode")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayModeNormalization {
+    /// The framebuffer was already in ordinary grayscale mode.
+    AlreadyDayMode,
+    /// The framebuffer was inverted and is now ordinary grayscale.
+    Normalized,
+}
+
+/// Re-queries one resolved framebuffer and clears only stale hardware inversion.
+///
+/// KOReader implements Kindle night mode by changing the Linux framebuffer's
+/// `grayscale` field from `GRAYSCALE_8BIT` to
+/// `GRAYSCALE_8BIT_INVERTED`. A sleep or exit race can leave that global flag
+/// enabled after KOReader returns to Ferrink. This boundary accepts only those
+/// two values, preserves the complete live `fb_var_screeninfo`, changes only
+/// `grayscale`, and verifies the resolved capability afterward. It does not map
+/// framebuffer pixels or submit a refresh.
+///
+/// # Errors
+///
+/// Returns a structured error if the exact resolved character device cannot be
+/// opened, its live capability drifted, its grayscale mode is unsupported, or
+/// either framebuffer ioctl fails.
+#[cfg(feature = "linux-display-mode")]
+#[allow(unsafe_code)]
+pub fn normalize_framebuffer_day_mode(
+    device: &ResolvedRuntimeDevice,
+) -> Result<DisplayModeNormalization, LinuxDisplayModeError> {
+    let framebuffer_path = Path::new(device.framebuffer_path());
+    let metadata = framebuffer_path
+        .symlink_metadata()
+        .map_err(|error| display_mode_io_error(DisplayModeOperation::InspectPath, &error))?;
+    if !metadata.file_type().is_char_device()
+        || framebuffer_path
+            .canonicalize()
+            .map_err(|error| display_mode_io_error(DisplayModeOperation::InspectPath, &error))?
+            != framebuffer_path
+    {
+        return Err(LinuxDisplayModeError::InvalidFramebufferPath);
+    }
+
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(framebuffer_path)
+        .map_err(|error| display_mode_io_error(DisplayModeOperation::OpenFramebuffer, &error))?;
+    let expected = device.framebuffer_capability();
+    if expected.grayscale != GRAYSCALE_8BIT {
+        return Err(LinuxDisplayModeError::InvalidResolvedDayMode(
+            expected.grayscale,
+        ));
+    }
+    let observed = query_framebuffer_capability(&file, device.framebuffer_path())
+        .map_err(LinuxDisplayModeError::QueryCapability)?;
+    let observed_grayscale = observed.grayscale;
+    let mut comparable = observed;
+    comparable.grayscale = expected.grayscale;
+    if &comparable != expected {
+        return Err(LinuxDisplayModeError::CapabilityChanged);
+    }
+    match observed_grayscale {
+        GRAYSCALE_8BIT => return Ok(DisplayModeNormalization::AlreadyDayMode),
+        GRAYSCALE_8BIT_INVERTED => {}
+        unsupported => return Err(LinuxDisplayModeError::UnsupportedGrayscale(unsupported)),
+    }
+
+    let mut variable = FbVarScreeninfo::default();
+    // SAFETY: `file` owns the exact revalidated framebuffer descriptor, the
+    // request writes into the correctly sized C-compatible structure, and
+    // `variable` is exclusively borrowed for the duration of the call.
+    if unsafe {
+        libc::ioctl(
+            file.as_raw_fd(),
+            FBIOGET_VSCREENINFO as _,
+            &mut variable as *mut FbVarScreeninfo,
+        )
+    } < 0
+    {
+        return Err(last_display_mode_io_error(
+            DisplayModeOperation::QueryVariableInfo,
+        ));
+    }
+    if variable.grayscale != GRAYSCALE_8BIT_INVERTED {
+        return Err(LinuxDisplayModeError::CapabilityChanged);
+    }
+    variable.grayscale = GRAYSCALE_8BIT;
+    // SAFETY: `variable` came from a fresh FBIOGET_VSCREENINFO call on this
+    // descriptor, remains exclusively borrowed, and only its grayscale field
+    // was changed to the documented ordinary 8-bit value.
+    if unsafe {
+        libc::ioctl(
+            file.as_raw_fd(),
+            FBIOPUT_VSCREENINFO as _,
+            &variable as *const FbVarScreeninfo,
+        )
+    } < 0
+    {
+        return Err(last_display_mode_io_error(
+            DisplayModeOperation::SetVariableInfo,
+        ));
+    }
+    let verified = query_framebuffer_capability(&file, device.framebuffer_path())
+        .map_err(LinuxDisplayModeError::VerifyCapability)?;
+    if &verified != expected {
+        return Err(LinuxDisplayModeError::CapabilityChanged);
+    }
+    Ok(DisplayModeNormalization::Normalized)
+}
+
+/// Exact Linux operation attempted while normalizing display mode.
+#[cfg(feature = "linux-display-mode")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayModeOperation {
+    /// Inspect the resolved framebuffer path.
+    InspectPath,
+    /// Open the exact framebuffer read/write without following links.
+    OpenFramebuffer,
+    /// Re-query the complete variable framebuffer structure.
+    QueryVariableInfo,
+    /// Write the variable structure with ordinary grayscale selected.
+    SetVariableInfo,
+}
+
+/// Failure while clearing stale global framebuffer inversion.
+#[cfg(feature = "linux-display-mode")]
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum LinuxDisplayModeError {
+    /// The resolved path was redirected or was not a character device.
+    InvalidFramebufferPath,
+    /// The passive resolved capability was not captured in ordinary day mode.
+    InvalidResolvedDayMode(u32),
+    /// Live framebuffer metadata changed outside the permitted grayscale flag.
+    CapabilityChanged,
+    /// The live grayscale value was neither ordinary nor inverted eight-bit.
+    UnsupportedGrayscale(u32),
+    /// A bounded device operation failed.
+    Io {
+        /// Exact failed operation.
+        operation: DisplayModeOperation,
+        /// Positive errno when available.
+        errno: Option<NonZeroI32>,
+    },
+    /// The initial complete capability query failed.
+    QueryCapability(ReadOnlyIoError),
+    /// The post-write complete capability query failed.
+    VerifyCapability(ReadOnlyIoError),
+}
+
+#[cfg(feature = "linux-display-mode")]
+impl std::fmt::Display for LinuxDisplayModeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFramebufferPath => {
+                formatter.write_str("resolved framebuffer path is not an exact character device")
+            }
+            Self::InvalidResolvedDayMode(value) => {
+                write!(
+                    formatter,
+                    "resolved framebuffer baseline uses grayscale mode {value}"
+                )
+            }
+            Self::CapabilityChanged => {
+                formatter.write_str("live framebuffer capability changed outside display mode")
+            }
+            Self::UnsupportedGrayscale(value) => {
+                write!(
+                    formatter,
+                    "unsupported live framebuffer grayscale mode {value}"
+                )
+            }
+            Self::Io { operation, errno } => write!(
+                formatter,
+                "display-mode {operation:?} failed{}",
+                DisplayModeErrnoSuffix(*errno)
+            ),
+            Self::QueryCapability(error) => {
+                write!(
+                    formatter,
+                    "cannot query framebuffer before normalization: {error}"
+                )
+            }
+            Self::VerifyCapability(error) => {
+                write!(
+                    formatter,
+                    "cannot verify framebuffer after normalization: {error}"
+                )
+            }
+        }
+    }
+}
+
+#[cfg(feature = "linux-display-mode")]
+impl std::error::Error for LinuxDisplayModeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::QueryCapability(error) | Self::VerifyCapability(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "linux-display-mode")]
+fn display_mode_io_error(
+    operation: DisplayModeOperation,
+    error: &std::io::Error,
+) -> LinuxDisplayModeError {
+    LinuxDisplayModeError::Io {
+        operation,
+        errno: positive_errno(error),
+    }
+}
+
+#[cfg(feature = "linux-display-mode")]
+fn last_display_mode_io_error(operation: DisplayModeOperation) -> LinuxDisplayModeError {
+    display_mode_io_error(operation, &std::io::Error::last_os_error())
+}
+
+#[cfg(feature = "linux-display-mode")]
+struct DisplayModeErrnoSuffix(Option<NonZeroI32>);
+
+#[cfg(feature = "linux-display-mode")]
+impl std::fmt::Display for DisplayModeErrnoSuffix {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(errno) => write!(formatter, " with errno {}", errno.get()),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Owned Linux input descriptor opened read-only and nonblocking.

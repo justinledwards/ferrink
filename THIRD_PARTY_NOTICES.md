@@ -30,6 +30,13 @@ machine-generated inventory from `cargo metadata --locked`; it lists package,
 version, source, declared license expression, and repository URL. Individual
 dependency license texts remain with their upstream source packages.
 
+## Optional library updater tools
+
+The KOReader library updater installer can fetch pinned, unmodified Tailscale
+and rclone ARMv7 release binaries from their official publishers. Those
+binaries are not stored in this repository and remain subject to their
+upstream licenses and notices.
+
 ## Ideas are not copied code
 
 The projects credited in [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) informed

@@ -22,3 +22,9 @@ tests.
 The project keeps the vendor interface available as a recovery and compatibility
 destination. Ferrink does not bundle vendor software or claim that every
 Linux-based reader has the same display, input, power, or boot behavior.
+
+Some reader applications implement night mode by changing a global Linux
+framebuffer flag. Before drawing a new foreground frame, the optional Kindle
+adapter revalidates the exact framebuffer and clears only a stale eight-bit
+inversion value. It preserves every other live display field, maps no pixels,
+and submits no refresh as part of that normalization.

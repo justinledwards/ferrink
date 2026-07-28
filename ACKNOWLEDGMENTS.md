@@ -14,6 +14,12 @@ not copied unless a separate notice says otherwise.
 
 - [KOReader](https://github.com/koreader/koreader) — reader-app behavior and
   launcher handoff research.
+- [koreader-tailscale](https://github.com/victoria-riley-barnett/koreader-tailscale)
+  — userspace-networking research for the optional library updater. Ferrink's
+  narrower updater is independently implemented.
+- [Tailscale](https://github.com/tailscale/tailscale) and
+  [rclone](https://github.com/rclone/rclone) — pinned official release binaries
+  fetched by the optional updater installer; neither binary is vendored here.
 - [KindleModding/sh_integration](https://github.com/KindleModding/sh_integration)
   — lifecycle research only; no repository-wide license was identified, so no
   implementation was copied.

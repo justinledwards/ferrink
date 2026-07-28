@@ -4,6 +4,9 @@
 //! `linux-device` feature adds exact-path read-only metadata revalidation and a
 //! nonblocking input descriptor seam. It does not map framebuffer memory,
 //! submit a display update, request an input grab, or change a stock service.
+//! The separate `linux-display-mode` feature can revalidate that exact
+//! framebuffer and clear only stale global eight-bit inversion; it preserves
+//! all other variable-screen fields and submits no refresh.
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
