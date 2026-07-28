@@ -3,9 +3,12 @@
 ## Status
 
 This note records a physically verified KOA3 display mechanism discovered on
-2026-07-28. It is characterization evidence, not yet a production feature.
-Ferrink must not enable it until the explicit cleanup and crash-recovery path
-described below is implemented and tested.
+2026-07-28. Ferrink now implements it for the exact reviewed KOA3 profile. The
+shell owns a two-phase apply/repaint/commit sequence, clears explicitly before
+normal handoff, and the out-of-process guardian independently clears it before
+stock crash recovery. Host tests and the reviewed ARM `cargo zigbuild` pass;
+the integrated drawer still requires the physical-panel acceptance described
+below because no screenshot path can show this layer.
 
 The mechanism is useful for Ferrink's quick-settings drawer: the drawer can
 remain sharp while the home surface below it is rendered with Amazon's subtle
@@ -169,12 +172,12 @@ GC16 update. The captured stock request contained:
 
 During characterization, `/usr/bin/xrefresh -display :0.0` caused stock LIGL
 to issue this repaint. That was a convenient way to prove the independent
-lightbox request while stock owned the foreground. Ferrink production code
-must use its existing typed Zelda display adapter; it must not add X11 or
-`xrefresh` as a launcher dependency. The existing Ferrink encoder currently
-uses zero histogram waveform fields, so a production lightbox gate must prove
-whether those stock histogram values are required rather than assuming they
-are interchangeable.
+lightbox request while stock owned the foreground. Ferrink uses its existing
+typed Zelda display adapter and adds neither X11 nor `xrefresh` as a launcher
+dependency. It forces one full update for each changed lightbox state. The
+adapter's reviewed full-update encoder uses zero histogram waveform fields, so
+the integrated physical acceptance specifically checks that this produces the
+same apply and clear result on the panel.
 
 ## Ferrink lifecycle contract
 
@@ -224,24 +227,29 @@ after the apply request requires an immediate explicit clear attempt followed
 by foreground recovery. A clear or clear-repaint failure is a recovery fault,
 not a cosmetic warning.
 
-## Tests required before enabling it
+## Verification coverage
 
-Host tests must cover:
+Host coverage includes:
 
 - compile-time request size, alignment, field offsets, and ioctl number;
 - public `(x, y)` to kernel `(top, left)` ordering;
-- zero, overflow, out-of-bounds, and two-region validation;
+- nonempty, overflow, and out-of-bounds foreground validation through the
+  existing typed refresh-region boundary;
 - exact apply and clear payloads;
 - the narrow KOA3 `EINVAL` acceptance rule;
 - no duplicate apply/clear calls across repeated UI events;
-- apply-refresh and clear-refresh ordering;
+- two-phase apply/clear state that cannot commit before presentation;
 - explicit cleanup on normal close and application handoff;
 - guardian cleanup after a simulated shell crash; and
 - no lightbox authority on PW1 or an unknown profile.
 
-The device gate must use a freshly built ARM artifact, a closed stock lightbox
-preflight, a physically observed apply and clear, and a final healthy stock
-handoff. Screenshots alone cannot satisfy it.
+The shell integration test also drives the production Slint callbacks through
+physical KOA3 coordinates and verifies that opening and closing the drawer emit
+the exact 1264-by-732 sharp foreground intent.
+
+The remaining device gate uses a freshly built ARM artifact, a closed stock
+lightbox preflight, a physically observed drawer apply and clear, and a final
+healthy application or stock handoff. Screenshots alone cannot satisfy it.
 
 ## Investigated alternatives
 
