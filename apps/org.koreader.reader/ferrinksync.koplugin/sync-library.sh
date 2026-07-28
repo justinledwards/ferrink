@@ -92,6 +92,17 @@ esac
 if [ "$sync_budget_seconds" -lt 60 ] || [ "$sync_budget_seconds" -gt 7200 ]; then
     fail "The library update time limit is invalid."
 fi
+if [ $((sync_budget_seconds % 60)) -eq 0 ]; then
+    sync_budget_minutes=$((sync_budget_seconds / 60))
+    if [ "$sync_budget_minutes" -eq 1 ]; then
+        sync_limit_label="1-minute"
+    else
+        sync_limit_label="$sync_budget_minutes-minute"
+    fi
+else
+    sync_limit_label="$sync_budget_seconds-second"
+fi
+sync_limit_message="The library update reached its $sync_limit_label safety limit. Try again to continue."
 sync_deadline=$(( $(date +%s) + sync_budget_seconds ))
 
 if ! mkdir -p "$state_dir" >>"$run_log" 2>&1; then
@@ -164,7 +175,7 @@ while IFS='|' read -r destination source || [ -n "${destination:-}${source:-}" ]
 
     remaining_seconds=$(( sync_deadline - $(date +%s) ))
     if [ "$remaining_seconds" -le 0 ]; then
-        fail "The library update reached its 30-minute safety limit. Try again to continue."
+        fail "$sync_limit_message"
     fi
     if ! "$timeout_tool" timeout -t "$remaining_seconds" -s TERM "$rclone" copy \
         --config "$config_file" \
@@ -177,7 +188,7 @@ while IFS='|' read -r destination source || [ -n "${destination:-}${source:-}" ]
         "$destination_dir" \
         >>"$run_log" 2>&1; then
         if [ "$(date +%s)" -ge "$sync_deadline" ]; then
-            fail "The library update reached its 30-minute safety limit. Try again to continue."
+            fail "$sync_limit_message"
         fi
         fail "The $destination collection could not be updated. No books were deleted."
     fi
