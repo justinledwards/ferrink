@@ -5,7 +5,7 @@
 use ferrink_platform::RefreshRegion;
 
 /// KOA3 legacy lightbox request number with its exact 36-byte payload size.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) const KOA3_APPLY_HALFTONE: u64 = 0x4024_464b;
 
 const KOA3_LIGHTBOX_MODE: u32 = 1;
