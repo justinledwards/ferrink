@@ -28,3 +28,11 @@ framebuffer flag. Before drawing a new foreground frame, the optional Kindle
 adapter revalidates the exact framebuffer and clears only a stale eight-bit
 inversion value. It preserves every other live display field, maps no pixels,
 and submits no refresh as part of that normalization.
+
+On the exact reviewed Kindle Oasis 3 profile, the quick-settings drawer can use
+the panel's post-framebuffer lightbox effect. Slint emits only an open or close
+intent; the typed Kindle display adapter validates the region, submits the
+device request, and pairs each change with a full repaint. The shell explicitly
+clears the effect before handing the screen to an app, and the separate
+supervisor repeats that cleanup before crash recovery. See the
+[KOA3 lightbox note](KOA3_LIGHTBOX.md) for the narrow hardware contract.

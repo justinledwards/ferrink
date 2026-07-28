@@ -41,6 +41,7 @@ does, what it needs, and how to keep your own configuration local.
 
 - [Architecture](docs/ARCHITECTURE.md)
 - [Device-tool guide](docs/KINDLE_DEVICE_TOOL.md)
+- [KOA3 quick-settings lightbox](docs/KOA3_LIGHTBOX.md)
 - [Optional KOReader library update](docs/KOREADER_LIBRARY_SYNC.md)
 - [Acknowledgments](ACKNOWLEDGMENTS.md)
 - [Contributing](CONTRIBUTING.md)
