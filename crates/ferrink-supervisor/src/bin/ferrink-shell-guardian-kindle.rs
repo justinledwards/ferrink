@@ -799,6 +799,23 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                 ) {
                     Ok(mut child) => match child.await_readiness(&signal_guard) {
                         Ok(()) => {
+                            let active_lease = lease
+                                .as_mut()
+                                .expect("foreground lease exists while the shell is ready");
+                            if let Err(error) =
+                                active_lease.set_suspend_inhibited(&mut system, false)
+                            {
+                                let termination = child.terminate_bounded();
+                                let restore_result = lease
+                                    .take()
+                                    .expect("foreground lease exists after shell suspend-policy failure")
+                                    .restore(&mut system);
+                                let signal_restore = signal_guard.finish();
+                                return Err(format!(
+                                    "{error}; shell termination was {termination:?}; stock restoration was {restore_result:?}; signal restoration was {signal_restore:?}"
+                                )
+                                .into());
+                            }
                             let disposition = supervise(
                                 &mut child,
                                 &signal_guard,
@@ -872,11 +889,14 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                                 "stock restoration failed before application handoff: {error:?}"
                             )
                         })?;
-                    } else if !application.manifest.requirements.prevent_suspend {
+                    } else {
                         let active_lease = lease
                             .as_mut()
                             .expect("foreground lease exists until supervisor handoff");
-                        if let Err(error) = active_lease.set_suspend_inhibited(&mut system, false) {
+                        if let Err(error) = active_lease.set_suspend_inhibited(
+                            &mut system,
+                            application.manifest.requirements.prevent_suspend,
+                        ) {
                             let restore_result = lease
                                 .take()
                                 .expect("foreground lease exists after suspend-policy failure")
@@ -937,7 +957,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     if application.manifest.display.handoff == DisplayHandoff::StockMediated {
                         break;
                     }
-                    if !application.manifest.requirements.prevent_suspend {
+                    if application.manifest.display.handoff == DisplayHandoff::Supervisor {
                         let active_lease = lease
                             .as_mut()
                             .expect("foreground lease exists after supervisor handoff");
