@@ -86,8 +86,10 @@ fn kindle_cover_state(event_type: u16, code: u16, value: i32) -> Option<KindleCo
         return None;
     }
     match value {
-        0 => Some(KindleCoverState::Open),
-        1 => Some(KindleCoverState::Closed),
+        // The reviewed KOA3 hall sensor asserts SW_LID while the cover is
+        // open and clears it when the magnet closes the cover.
+        0 => Some(KindleCoverState::Closed),
+        1 => Some(KindleCoverState::Open),
         _ => None,
     }
 }
@@ -1198,8 +1200,8 @@ mod tests {
 
     #[test]
     fn cover_indicator_accepts_only_lid_switch_transitions() {
-        assert_eq!(kindle_cover_state(5, 0, 0), Some(KindleCoverState::Open));
-        assert_eq!(kindle_cover_state(5, 0, 1), Some(KindleCoverState::Closed));
+        assert_eq!(kindle_cover_state(5, 0, 0), Some(KindleCoverState::Closed));
+        assert_eq!(kindle_cover_state(5, 0, 1), Some(KindleCoverState::Open));
         for (event_type, code, value) in [(5, 0, -1), (5, 0, 2), (5, 1, 1), (1, 0, 1)] {
             assert_eq!(kindle_cover_state(event_type, code, value), None);
         }
