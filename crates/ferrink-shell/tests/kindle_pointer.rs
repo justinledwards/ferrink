@@ -70,6 +70,9 @@ impl ShellDevicePort for FakeDevicePort {
             ShellDeviceCommand::ToggleAutoBrightness => {
                 self.snapshot.auto_brightness = !self.snapshot.auto_brightness;
             }
+            ShellDeviceCommand::ToggleRotationLock => {
+                self.snapshot.rotation_locked = !self.snapshot.rotation_locked;
+            }
             ShellDeviceCommand::ToggleWifi => {
                 self.snapshot.wifi = if self.snapshot.wifi == "Off" {
                     "Wi-Fi".to_owned()
@@ -110,9 +113,13 @@ fn fake_device_port() -> FakeDevicePort {
             battery_percent: 73,
             charging: false,
             wifi: "Wi-Fi".to_owned(),
+            wifi_ssid: "Home network".to_owned(),
+            ip_address: "192.0.2.10".to_owned(),
             frontlight: 10,
             warmth: 18,
             auto_brightness: false,
+            rotation_locked: true,
+            rotation_lock_available: true,
             bluetooth: "Off".to_owned(),
             ssh: "On".to_owned(),
             usbnet: "On".to_owned(),

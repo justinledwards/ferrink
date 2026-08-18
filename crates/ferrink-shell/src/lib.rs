@@ -220,6 +220,7 @@ pub fn configure_shell_window(
     ui.set_ui_scale(profile.ui_scale());
     let data = ui.global::<ShellData>();
     data.set_profile_label(profile.label().into());
+    data.set_rotation_lock_available(matches!(profile, ShellProfile::Oasis3));
     let background =
         render_jacquard_background(JACQUARD_WIDTH, JACQUARD_HEIGHT, JacquardPreset::EinkCalm)?;
     data.set_launcher_background(slint::Image::from_rgb8(background));

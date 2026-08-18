@@ -50,9 +50,13 @@ export global ShellData {
     in property <bool> battery-charging: false;
     in property <string> battery-status: "96%";
     in property <string> network-status: "Wi-Fi";
+    in property <string> wifi-ssid-status: "Home network";
+    in property <string> ip-address-status: "192.0.2.10";
     in property <int> frontlight-level: 11;
     in property <int> warmth-level: 19;
     in property <bool> auto-brightness: false;
+    in property <bool> rotation-locked: true;
+    in property <bool> rotation-lock-available: true;
     in property <bool> display-controls-available: true;
     in property <string> bluetooth-status: "Off";
     in property <string> ssh-status: "On";
@@ -87,6 +91,7 @@ export global ShellActions {
     callback set-frontlight(int);
     callback set-warmth(int);
     callback toggle-auto-brightness();
+    callback toggle-rotation-lock();
     callback toggle-wifi();
     callback cycle-literary-clock-interval();
     callback select-launcher-background(int);
@@ -729,21 +734,25 @@ component ToggleSettingRow inherits Rectangle {
             font-weight: 800;
             vertical-alignment: center;
         }
-        Rectangle {
+        VerticalLayout {
             width: 58px * root.ui-scale;
-            height: 32px * root.ui-scale;
-            background: root.checked ? #111111 : transparent;
-            border-width: 2px * root.ui-scale;
-            border-color: root.enabled ? #111111 : #777773;
-            border-radius: 4px * root.ui-scale;
+            alignment: center;
 
             Rectangle {
-                x: (root.checked ? 30px : 4px) * root.ui-scale;
-                y: 4px * root.ui-scale;
-                width: 22px * root.ui-scale;
-                height: 24px * root.ui-scale;
-                background: root.checked ? white : #111111;
-                border-radius: 2px * root.ui-scale;
+                height: 32px * root.ui-scale;
+                background: root.checked ? #111111 : transparent;
+                border-width: 2px * root.ui-scale;
+                border-color: root.enabled ? #111111 : #777773;
+                border-radius: 4px * root.ui-scale;
+
+                Rectangle {
+                    x: (root.checked ? 30px : 4px) * root.ui-scale;
+                    y: 4px * root.ui-scale;
+                    width: 22px * root.ui-scale;
+                    height: 24px * root.ui-scale;
+                    background: root.checked ? white : #111111;
+                    border-radius: 2px * root.ui-scale;
+                }
             }
         }
     }
@@ -1141,7 +1150,7 @@ export component ShellWindow inherits Window {
 
                     settings-content := VerticalLayout {
                         width: settings-scroll.width;
-                        height: 1220px * root.ui-scale;
+                        height: 1440px * root.ui-scale;
                         padding-left: 34px * root.ui-scale;
                         padding-right: 34px * root.ui-scale;
                         padding-top: 20px * root.ui-scale;
@@ -1162,6 +1171,13 @@ export component ShellWindow inherits Window {
                             enabled: !root.modal-visible && ShellData.display-controls-available;
                             ui-scale: root.ui-scale;
                             toggled => { ShellActions.toggle-auto-brightness(); }
+                        }
+                        ToggleSettingRow {
+                            label: "Rotation lock";
+                            checked: ShellData.rotation-locked;
+                            enabled: !root.modal-visible && ShellData.rotation-lock-available;
+                            ui-scale: root.ui-scale;
+                            toggled => { ShellActions.toggle-rotation-lock(); }
                         }
                         SettingChoiceRow {
                             label: "Background";
@@ -1194,6 +1210,8 @@ export component ShellWindow inherits Window {
                             font-weight: 800;
                         }
                         StatusRow { label: "Wi-Fi"; value: ShellData.network-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "SSID"; value: ShellData.wifi-ssid-status; ui-scale: root.ui-scale; }
+                        StatusRow { label: "IP address"; value: ShellData.ip-address-status; ui-scale: root.ui-scale; }
                         StatusRow { label: "Bluetooth"; value: ShellData.bluetooth-status; ui-scale: root.ui-scale; }
                         StatusRow { label: "SSH"; value: ShellData.ssh-status; ui-scale: root.ui-scale; }
                         StatusRow { label: "USB network"; value: ShellData.usbnet-status; ui-scale: root.ui-scale; }

@@ -37,12 +37,20 @@ pub struct ShellDeviceSnapshot {
     pub charging: bool,
     /// Human-readable Wi-Fi state.
     pub wifi: String,
+    /// Current connected Wi-Fi network name, or a short unavailable state.
+    pub wifi_ssid: String,
+    /// Current `wlan0` IPv4 address, or a short unavailable state.
+    pub ip_address: String,
     /// Front-light intensity, clamped to the reviewed `0..=24` range.
     pub frontlight: u8,
     /// Warm-light intensity, clamped to the reviewed `0..=24` range.
     pub warmth: u8,
     /// Whether the stock ambient-light controller is enabled.
     pub auto_brightness: bool,
+    /// Whether Ferrink ignores Oasis portrait-flip gyro events.
+    pub rotation_locked: bool,
+    /// Whether the exact reviewed Oasis gyro input was revalidated.
+    pub rotation_lock_available: bool,
     /// Human-readable Bluetooth state.
     pub bluetooth: String,
     /// Human-readable SSH state.
@@ -82,6 +90,8 @@ pub enum ShellDeviceCommand {
     SetWarmth(u8),
     /// Toggle the stock ambient-light controller.
     ToggleAutoBrightness,
+    /// Toggle whether Oasis portrait-flip gyro events are ignored.
+    ToggleRotationLock,
     /// Toggle the reviewed Wi-Fi service pair.
     ToggleWifi,
     /// Advance the optional persisted literary-clock interval.
@@ -117,9 +127,13 @@ pub fn sync_device_ui(ui: &ShellWindow, snapshot: &ShellDeviceSnapshot) {
     data.set_battery_charging(snapshot.charging);
     data.set_battery_status(format!("{}%", snapshot.battery_percent).into());
     data.set_network_status(snapshot.wifi.as_str().into());
+    data.set_wifi_ssid_status(snapshot.wifi_ssid.as_str().into());
+    data.set_ip_address_status(snapshot.ip_address.as_str().into());
     data.set_frontlight_level(i32::from(snapshot.frontlight));
     data.set_warmth_level(i32::from(snapshot.warmth));
     data.set_auto_brightness(snapshot.auto_brightness);
+    data.set_rotation_locked(snapshot.rotation_locked);
+    data.set_rotation_lock_available(snapshot.rotation_lock_available);
     data.set_display_controls_available(true);
     data.set_bluetooth_status(snapshot.bluetooth.as_str().into());
     data.set_ssh_status(snapshot.ssh.as_str().into());
@@ -285,6 +299,15 @@ pub fn install_device_handlers<P: ShellDevicePort + 'static>(
         let result = auto_brightness_port
             .borrow_mut()
             .apply(ShellDeviceCommand::ToggleAutoBrightness);
+        apply_result(&weak_ui, result);
+    });
+
+    let weak_ui = ui.as_weak();
+    let rotation_lock_port = Rc::clone(&port);
+    actions.on_toggle_rotation_lock(move || {
+        let result = rotation_lock_port
+            .borrow_mut()
+            .apply(ShellDeviceCommand::ToggleRotationLock);
         apply_result(&weak_ui, result);
     });
 

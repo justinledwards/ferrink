@@ -1,11 +1,14 @@
 //! Reviewed Kindle implementation of the shell device boundary.
 
+use std::cell::Cell;
 use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
+use std::net::Ipv4Addr;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::{
@@ -18,9 +21,11 @@ use crate::{
 const DATE: &str = "/bin/date";
 const LIPC_GET: &str = "/usr/bin/lipc-get-prop";
 const LIPC_SET: &str = "/usr/bin/lipc-set-prop";
+const WPA_CLI: &str = "/usr/bin/wpa_cli";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_COMMAND_OUTPUT: u64 = 128;
+const MAX_NETWORK_COMMAND_OUTPUT: u64 = 4_096;
 const MAX_STATUS_FILE: u64 = 64;
 const LIGHT_MAXIMUM: i32 = 24;
 const LITERARY_CORPUS_PATH: &str = "/mnt/us/ferrink/literary-clock/quotes.psv";
@@ -31,6 +36,9 @@ const LAUNCHER_BACKGROUND_DIRECTORY: &str = "/mnt/us/ferrink/backgrounds";
 const LAUNCHER_BACKGROUND_SETTING_PATH: &str = "/mnt/us/ferrink/background.settings";
 const LAUNCHER_BACKGROUND_SETTING_HEADER: &str = "ferrink-launcher-background-v1";
 const MAX_LAUNCHER_BACKGROUND_SETTING_BYTES: u64 = 128;
+const ROTATION_SETTING_PATH: &str = "/var/local/ferrink/rotation.settings";
+const ROTATION_SETTING_HEADER: &str = "ferrink-rotation-v1";
+const MAX_ROTATION_SETTING_BYTES: u64 = 64;
 const MAX_BACKGROUND_DIRECTORY_ENTRIES: usize = 64;
 const MAX_BACKGROUND_FILE_CHOICES: usize = 15;
 
@@ -42,6 +50,8 @@ pub struct KindleShellDevicePort {
     launcher_background_choice: LauncherBackgroundChoice,
     launcher_background_choices: Vec<LauncherBackgroundChoice>,
     launcher_background: Option<slint::Image>,
+    rotation_locked: Rc<Cell<bool>>,
+    rotation_lock_available: Rc<Cell<bool>>,
 }
 
 impl KindleShellDevicePort {
@@ -93,13 +103,31 @@ impl KindleShellDevicePort {
                 }
                 (LauncherBackgroundChoice::Pattern, None)
             };
+        let rotation_locked = match read_rotation_setting(Path::new(ROTATION_SETTING_PATH)) {
+            Ok(locked) => locked,
+            Err(error) => {
+                eprintln!("ferrink-shell: rotation preference ignored: {error}");
+                true
+            }
+        };
         Self {
             literary_corpus,
             literary_clock_interval_minutes,
             launcher_background_choice,
             launcher_background_choices,
             launcher_background,
+            rotation_locked: Rc::new(Cell::new(rotation_locked)),
+            rotation_lock_available: Rc::new(Cell::new(false)),
         }
+    }
+
+    /// Returns shared runtime state for the exact reviewed gyro adapter.
+    #[must_use]
+    pub fn rotation_states(&self) -> (Rc<Cell<bool>>, Rc<Cell<bool>>) {
+        (
+            Rc::clone(&self.rotation_locked),
+            Rc::clone(&self.rotation_lock_available),
+        )
     }
 }
 
@@ -182,6 +210,14 @@ impl ShellDevicePort for KindleShellDevicePort {
                 set_light("currentAmberLevel", value, "warm-light")?;
             }
             ShellDeviceCommand::ToggleAutoBrightness => toggle_auto_brightness()?,
+            ShellDeviceCommand::ToggleRotationLock => {
+                if !self.rotation_lock_available.get() {
+                    return Err(KindleShellDeviceError::InvalidValue("rotation lock"));
+                }
+                let locked = !self.rotation_locked.get();
+                write_rotation_setting(Path::new(ROTATION_SETTING_PATH), locked)?;
+                self.rotation_locked.set(locked);
+            }
             ShellDeviceCommand::ToggleWifi => toggle_wifi()?,
             ShellDeviceCommand::CycleLiteraryClockInterval => {
                 if self.literary_corpus.is_none() {
@@ -255,6 +291,7 @@ fn read_snapshot(
     let wifi_enabled = read_bool("com.lab126.wifid", "enable", "Wi-Fi enable")?;
     let connection = get_property("com.lab126.wifid", "cmState", "Wi-Fi state")?;
     let wifi = wifi_label(wifi_enabled, connection.as_str()).to_owned();
+    let (wifi_ssid, ip_address) = network_identity(wifi_enabled, connection.as_str());
     let bluetooth = optional_property("com.lab126.btfd", "BTstate", "Bluetooth state")
         .as_deref()
         .map(bluetooth_label)
@@ -279,9 +316,13 @@ fn read_snapshot(
         battery_percent,
         charging,
         wifi,
+        wifi_ssid,
+        ip_address,
         frontlight,
         warmth,
         auto_brightness,
+        rotation_locked: port.rotation_locked.get(),
+        rotation_lock_available: port.rotation_lock_available.get(),
         bluetooth,
         ssh,
         usbnet,
@@ -535,6 +576,58 @@ fn get_property(
         .map_err(|_| KindleShellDeviceError::InvalidValue(operation))
 }
 
+fn network_identity(enabled: bool, connection: &str) -> (String, String) {
+    if !enabled {
+        return ("Off".to_owned(), "Off".to_owned());
+    }
+    if connection != "CONNECTED" {
+        return ("Not connected".to_owned(), "Unavailable".to_owned());
+    }
+
+    read_network_identity().unwrap_or_else(|| ("Unavailable".to_owned(), "Unavailable".to_owned()))
+}
+
+fn read_network_identity() -> Option<(String, String)> {
+    let output = run_command_with_limit(
+        WPA_CLI,
+        &["-i", "wlan0", "status"],
+        "Wi-Fi connection identity",
+        true,
+        MAX_NETWORK_COMMAND_OUTPUT,
+    )
+    .ok()?;
+    let value = String::from_utf8(output).ok()?;
+    parse_wpa_status(value.as_str())
+}
+
+fn parse_wpa_status(value: &str) -> Option<(String, String)> {
+    let mut state = None;
+    let mut ssid = None;
+    let mut ip_address = None;
+    for line in value.lines() {
+        let Some((key, raw_value)) = line.split_once('=') else {
+            continue;
+        };
+        match key {
+            "wpa_state" if state.replace(raw_value).is_some() => return None,
+            "ssid" if ssid.replace(raw_value).is_some() => return None,
+            "ip_address" if ip_address.replace(raw_value).is_some() => return None,
+            _ => {}
+        }
+    }
+    let ssid = ssid?;
+    let ip_address = ip_address?.parse::<Ipv4Addr>().ok()?;
+    if state? != "COMPLETED"
+        || ssid.is_empty()
+        || ssid.len() > 32
+        || ssid.chars().any(char::is_control)
+        || ip_address.is_unspecified()
+    {
+        return None;
+    }
+    Some((ssid.to_owned(), ip_address.to_string()))
+}
+
 fn set_property(
     service: &'static str,
     property: &'static str,
@@ -549,6 +642,22 @@ fn run_command(
     arguments: &[&str],
     operation: &'static str,
     capture_stdout: bool,
+) -> Result<Vec<u8>, KindleShellDeviceError> {
+    run_command_with_limit(
+        executable,
+        arguments,
+        operation,
+        capture_stdout,
+        MAX_COMMAND_OUTPUT,
+    )
+}
+
+fn run_command_with_limit(
+    executable: &'static str,
+    arguments: &[&str],
+    operation: &'static str,
+    capture_stdout: bool,
+    maximum_output: u64,
 ) -> Result<Vec<u8>, KindleShellDeviceError> {
     let child = Command::new(executable)
         .args(arguments)
@@ -581,10 +690,10 @@ fn run_command(
     };
     let mut output = Vec::new();
     stdout
-        .take(MAX_COMMAND_OUTPUT + 1)
+        .take(maximum_output + 1)
         .read_to_end(&mut output)
         .map_err(|source| KindleShellDeviceError::CommandIo { operation, source })?;
-    if output.len() as u64 > MAX_COMMAND_OUTPUT {
+    if output.len() as u64 > maximum_output {
         return Err(KindleShellDeviceError::InvalidValue(operation));
     }
     Ok(output)
@@ -770,6 +879,32 @@ fn write_launcher_background_setting(
     )
 }
 
+fn read_rotation_setting(path: &Path) -> Result<bool, KindleShellDeviceError> {
+    let Some(value) =
+        read_bounded_preference(path, MAX_ROTATION_SETTING_BYTES, "rotation preference")?
+    else {
+        return Ok(true);
+    };
+    parse_rotation_setting(value.as_str())
+        .ok_or(KindleShellDeviceError::InvalidValue("rotation preference"))
+}
+
+fn parse_rotation_setting(value: &str) -> Option<bool> {
+    match value
+        .strip_prefix("ferrink-rotation-v1\nlocked=")?
+        .strip_suffix('\n')?
+    {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn write_rotation_setting(path: &Path, locked: bool) -> Result<(), KindleShellDeviceError> {
+    let value = format!("{ROTATION_SETTING_HEADER}\nlocked={locked}\n");
+    write_atomic_preference(path, "rotation", value.as_str(), "rotation preference")
+}
+
 fn read_bounded_preference(
     path: &Path,
     maximum_bytes: u64,
@@ -934,6 +1069,47 @@ mod tests {
     }
 
     #[test]
+    fn completed_wpa_status_yields_only_the_current_ssid_and_ipv4() {
+        let status = "bssid=00:11:22:33:44:55\nfrequency=5180\nssid=Reading Room\nid=0\nmode=station\nwpa_state=COMPLETED\nip_address=192.0.2.44\n";
+        assert_eq!(
+            parse_wpa_status(status),
+            Some(("Reading Room".to_owned(), "192.0.2.44".to_owned()))
+        );
+    }
+
+    #[test]
+    fn incomplete_or_ambiguous_wpa_status_is_rejected() {
+        assert_eq!(
+            parse_wpa_status("ssid=Reading Room\nwpa_state=SCANNING\nip_address=192.0.2.44\n"),
+            None
+        );
+        assert_eq!(
+            parse_wpa_status("ssid=one\nssid=two\nwpa_state=COMPLETED\nip_address=192.0.2.44\n"),
+            None
+        );
+        assert_eq!(
+            parse_wpa_status("ssid=Reading\tRoom\nwpa_state=COMPLETED\nip_address=192.0.2.44\n"),
+            None
+        );
+        assert_eq!(
+            parse_wpa_status("ssid=Reading Room\nwpa_state=COMPLETED\nip_address=0.0.0.0\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn disconnected_network_identity_does_not_invoke_device_discovery() {
+        assert_eq!(
+            network_identity(false, "CONNECTED"),
+            ("Off".to_owned(), "Off".to_owned())
+        );
+        assert_eq!(
+            network_identity(true, "PENDING"),
+            ("Not connected".to_owned(), "Unavailable".to_owned())
+        );
+    }
+
+    #[test]
     fn local_time_label_accepts_only_the_stock_clock_shape() {
         assert!(valid_minute_key("00:00"));
         assert!(valid_minute_key("23:59"));
@@ -1006,6 +1182,23 @@ mod tests {
     }
 
     #[test]
+    fn rotation_preference_is_locked_by_default_and_has_one_exact_shape() {
+        assert_eq!(
+            parse_rotation_setting("ferrink-rotation-v1\nlocked=true\n"),
+            Some(true)
+        );
+        assert_eq!(
+            parse_rotation_setting("ferrink-rotation-v1\nlocked=false\n"),
+            Some(false)
+        );
+        assert_eq!(parse_rotation_setting("locked=false\n"), None);
+        assert_eq!(
+            parse_rotation_setting("ferrink-rotation-v1\nlocked=1\n"),
+            None
+        );
+    }
+
+    #[test]
     fn background_discovery_is_bounded_to_valid_png_files_in_one_directory() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -1034,6 +1227,8 @@ mod tests {
             launcher_background_choice: LauncherBackgroundChoice::Pattern,
             launcher_background_choices: vec![LauncherBackgroundChoice::Pattern],
             launcher_background: None,
+            rotation_locked: Rc::new(Cell::new(true)),
+            rotation_lock_available: Rc::new(Cell::new(true)),
         };
         let clock = LocalClock {
             minute_key: "09:43".to_owned(),

@@ -6,8 +6,8 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use ferrink_platform::{
-    Gray8Conversion, LogicalTouchPhase, RefreshCompletionPolicy, RefreshMode, RefreshRegion,
-    RefreshRequest, Rgb8Pixel, TouchContactEvent, UpdateMarker,
+    DisplayExtent, DisplayPoint, Gray8Conversion, LogicalTouchPhase, RefreshCompletionPolicy,
+    RefreshMode, RefreshRegion, RefreshRequest, Rgb8Pixel, TouchContactEvent, UpdateMarker,
 };
 use slint::WindowEventDispatchResult;
 use slint::platform::software_renderer::{
@@ -24,6 +24,67 @@ use crate::{DisplayTarget, L0DisplayCore, L0DisplayError};
 #[must_use]
 pub fn new_slint_window() -> Rc<MinimalSoftwareWindow> {
     MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer)
+}
+
+/// Portrait orientations supported without changing the reviewed display geometry.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FrameOrientation {
+    /// Wide Oasis bezel on the reviewed side.
+    #[default]
+    Upright,
+    /// Same portrait geometry rotated by 180 degrees.
+    UpsideDown,
+}
+
+/// Complete policy for converting and refreshing one Slint frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlintPresentConfig {
+    mode: RefreshMode,
+    completion: RefreshCompletionPolicy,
+    conversion: Gray8Conversion,
+    orientation: FrameOrientation,
+}
+
+impl SlintPresentConfig {
+    /// Binds refresh, pixel-conversion, and orientation choices for one frame.
+    #[must_use]
+    pub const fn new(
+        mode: RefreshMode,
+        completion: RefreshCompletionPolicy,
+        conversion: Gray8Conversion,
+        orientation: FrameOrientation,
+    ) -> Self {
+        Self {
+            mode,
+            completion,
+            conversion,
+            orientation,
+        }
+    }
+}
+
+/// Applies the same portrait orientation used by framebuffer presentation to touch.
+///
+/// # Errors
+///
+/// Returns [`SlintPointerError::PointOutsideDisplay`] if the already validated
+/// contact does not fit the supplied display extent.
+pub fn orient_touch_contact(
+    contact: TouchContactEvent,
+    visible: DisplayExtent,
+    orientation: FrameOrientation,
+) -> Result<TouchContactEvent, SlintPointerError> {
+    if contact.point.x >= visible.width() || contact.point.y >= visible.height() {
+        return Err(SlintPointerError::PointOutsideDisplay);
+    }
+    let point = match orientation {
+        FrameOrientation::Upright => contact.point,
+        FrameOrientation::UpsideDown => DisplayPoint {
+            x: visible.width() - 1 - contact.point.x,
+            y: visible.height() - 1 - contact.point.y,
+        },
+    };
+    Ok(TouchContactEvent { point, ..contact })
 }
 
 /// Stateful, fail-closed delivery of primary touch contacts to Slint.
@@ -115,6 +176,8 @@ fn pointer_event(
 pub enum SlintPointerError {
     /// The Slint window reported a zero, negative, infinite, or NaN scale.
     InvalidScaleFactor,
+    /// A contact escaped the validated visible display.
+    PointOutsideDisplay,
     /// Input teardown has already begun.
     Stopped,
     /// Slint rejected event delivery at the platform boundary.
@@ -125,6 +188,7 @@ impl std::fmt::Display for SlintPointerError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidScaleFactor => formatter.write_str("Slint window scale factor is invalid"),
+            Self::PointOutsideDisplay => formatter.write_str("touch point is outside the display"),
             Self::Stopped => formatter.write_str("Slint pointer delivery has stopped"),
             Self::Dispatch(error) => write!(formatter, "Slint pointer dispatch failed: {error}"),
         }
@@ -135,7 +199,7 @@ impl std::error::Error for SlintPointerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Dispatch(error) => Some(error),
-            Self::InvalidScaleFactor | Self::Stopped => None,
+            Self::InvalidScaleFactor | Self::PointOutsideDisplay | Self::Stopped => None,
         }
     }
 }
@@ -208,9 +272,7 @@ impl SlintFrameBuffer {
         window: &MinimalSoftwareWindow,
         display: &mut L0DisplayCore,
         target: &mut T,
-        mode: RefreshMode,
-        completion: RefreshCompletionPolicy,
-        conversion: Gray8Conversion,
+        config: SlintPresentConfig,
     ) -> Result<SlintPresentOutcome, SlintRenderError> {
         let actual = WindowAdapter::size(window);
         if actual.width != self.width.get() || actual.height != self.height.get() {
@@ -247,30 +309,39 @@ impl SlintFrameBuffer {
         let dirty_region =
             RefreshRegion::try_new(x, y, size.width, size.height, display.layout().visible())
                 .map_err(|_| SlintRenderError::DirtyRegionInvalid)?;
-        let region = if mode == RefreshMode::Full {
+        let region = if config.mode == RefreshMode::Full {
             RefreshRegion::full(display.layout().visible())
         } else {
             dirty_region
         };
 
-        self.stage_region(region)?;
-        let request = RefreshRequest::new(region, mode, completion);
+        self.stage_region(region, config.orientation)?;
+        let physical_region =
+            orient_region(region, display.layout().visible(), config.orientation)?;
+        let request = RefreshRequest::new(physical_region, config.mode, config.completion);
         let marker = display
             .present_rgb8(
                 target,
                 request,
                 self.staging_pixels.as_slice(),
-                region
+                physical_region
                     .width()
                     .try_into()
                     .expect("validated region width is non-zero"),
-                conversion,
+                config.conversion,
             )
             .map_err(SlintRenderError::Display)?;
-        Ok(SlintPresentOutcome::Presented { region, marker })
+        Ok(SlintPresentOutcome::Presented {
+            region: physical_region,
+            marker,
+        })
     }
 
-    fn stage_region(&mut self, region: RefreshRegion) -> Result<(), SlintRenderError> {
+    fn stage_region(
+        &mut self,
+        region: RefreshRegion,
+        orientation: FrameOrientation,
+    ) -> Result<(), SlintRenderError> {
         let width =
             usize::try_from(region.width()).map_err(|_| SlintRenderError::PixelCountOverflow)?;
         let height =
@@ -286,7 +357,11 @@ impl SlintFrameBuffer {
             usize::try_from(self.width.get()).map_err(|_| SlintRenderError::PixelCountOverflow)?;
         let x = usize::try_from(region.x()).map_err(|_| SlintRenderError::DirtyRegionInvalid)?;
         let y = usize::try_from(region.y()).map_err(|_| SlintRenderError::DirtyRegionInvalid)?;
-        for row in 0..height {
+        for output_row in 0..height {
+            let row = match orientation {
+                FrameOrientation::Upright => output_row,
+                FrameOrientation::UpsideDown => height - 1 - output_row,
+            };
             let start = y
                 .checked_add(row)
                 .and_then(|row| row.checked_mul(render_stride))
@@ -299,14 +374,44 @@ impl SlintFrameBuffer {
                 .render_pixels
                 .get(start..end)
                 .ok_or(SlintRenderError::DirtyRegionInvalid)?;
-            self.staging_pixels
-                .extend(pixels.iter().map(|pixel| Rgb8Pixel {
-                    red: pixel.r,
-                    green: pixel.g,
-                    blue: pixel.b,
-                }));
+            match orientation {
+                FrameOrientation::Upright => {
+                    self.staging_pixels
+                        .extend(pixels.iter().map(|pixel| Rgb8Pixel {
+                            red: pixel.r,
+                            green: pixel.g,
+                            blue: pixel.b,
+                        }));
+                }
+                FrameOrientation::UpsideDown => {
+                    self.staging_pixels
+                        .extend(pixels.iter().rev().map(|pixel| Rgb8Pixel {
+                            red: pixel.r,
+                            green: pixel.g,
+                            blue: pixel.b,
+                        }));
+                }
+            }
         }
         Ok(())
+    }
+}
+
+fn orient_region(
+    region: RefreshRegion,
+    visible: DisplayExtent,
+    orientation: FrameOrientation,
+) -> Result<RefreshRegion, SlintRenderError> {
+    match orientation {
+        FrameOrientation::Upright => Ok(region),
+        FrameOrientation::UpsideDown => RefreshRegion::try_new(
+            visible.width() - region.x() - region.width(),
+            visible.height() - region.y() - region.height(),
+            region.width(),
+            region.height(),
+            visible,
+        )
+        .map_err(|_| SlintRenderError::DirtyRegionInvalid),
     }
 }
 
@@ -502,6 +607,38 @@ mod tests {
     }
 
     #[test]
+    fn upside_down_portrait_mirrors_touch_and_dirty_regions_together() {
+        let visible = DisplayExtent::try_new(1264, 1680).unwrap();
+        let contact = TouchContactEvent {
+            phase: LogicalTouchPhase::Pressed,
+            point: DisplayPoint { x: 100, y: 200 },
+        };
+        assert_eq!(
+            orient_touch_contact(contact, visible, FrameOrientation::UpsideDown).unwrap(),
+            TouchContactEvent {
+                phase: LogicalTouchPhase::Pressed,
+                point: DisplayPoint { x: 1163, y: 1479 },
+            }
+        );
+        let logical = RefreshRegion::try_new(100, 200, 300, 400, visible).unwrap();
+        assert_eq!(
+            orient_region(logical, visible, FrameOrientation::UpsideDown).unwrap(),
+            RefreshRegion::try_new(864, 1080, 300, 400, visible).unwrap()
+        );
+        assert!(matches!(
+            orient_touch_contact(
+                TouchContactEvent {
+                    phase: LogicalTouchPhase::Moved,
+                    point: DisplayPoint { x: 1264, y: 0 },
+                },
+                visible,
+                FrameOrientation::Upright,
+            ),
+            Err(SlintPointerError::PointOutsideDisplay)
+        ));
+    }
+
+    #[test]
     fn real_slint_callback_replaces_full_target_then_renders_partial_region() {
         let window = new_slint_window();
         slint::platform::set_platform(Box::new(TestPlatform {
@@ -526,9 +663,12 @@ mod tests {
                 &window,
                 &mut display,
                 &mut target,
-                RefreshMode::Full,
-                RefreshCompletionPolicy::DoNotWait,
-                Gray8Conversion::Grayscale,
+                SlintPresentConfig::new(
+                    RefreshMode::Full,
+                    RefreshCompletionPolicy::DoNotWait,
+                    Gray8Conversion::Grayscale,
+                    FrameOrientation::Upright,
+                ),
             )
             .unwrap();
         assert!(matches!(
@@ -558,9 +698,12 @@ mod tests {
                 &window,
                 &mut display,
                 &mut target,
-                RefreshMode::Full,
-                RefreshCompletionPolicy::DoNotWait,
-                Gray8Conversion::Grayscale,
+                SlintPresentConfig::new(
+                    RefreshMode::Full,
+                    RefreshCompletionPolicy::DoNotWait,
+                    Gray8Conversion::Grayscale,
+                    FrameOrientation::Upright,
+                ),
             )
             .unwrap();
         assert!(matches!(
@@ -577,9 +720,12 @@ mod tests {
                 &window,
                 &mut display,
                 &mut target,
-                RefreshMode::Partial,
-                RefreshCompletionPolicy::DoNotWait,
-                Gray8Conversion::Grayscale,
+                SlintPresentConfig::new(
+                    RefreshMode::Partial,
+                    RefreshCompletionPolicy::DoNotWait,
+                    Gray8Conversion::Grayscale,
+                    FrameOrientation::Upright,
+                ),
             )
             .unwrap();
         let third_region = match third {
@@ -602,9 +748,12 @@ mod tests {
                     &window,
                     &mut display,
                     &mut target,
-                    RefreshMode::Partial,
-                    RefreshCompletionPolicy::DoNotWait,
-                    Gray8Conversion::Grayscale,
+                    SlintPresentConfig::new(
+                        RefreshMode::Partial,
+                        RefreshCompletionPolicy::DoNotWait,
+                        Gray8Conversion::Grayscale,
+                        FrameOrientation::Upright,
+                    ),
                 )
                 .unwrap(),
             SlintPresentOutcome::Idle

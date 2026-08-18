@@ -16,6 +16,11 @@ use std::rc::Rc;
     test,
     all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
 ))]
+use ferrink_platform_kindle::FrameOrientation;
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
+))]
 use ferrink_shell::{ShellCommand, ShellCommandOutcome, ShellCommandPort};
 
 #[cfg(all(target_os = "linux", target_arch = "arm", target_pointer_width = "32"))]
@@ -41,6 +46,24 @@ const COMMAND_REBOOT: u8 = b'R';
     all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
 ))]
 const COMMAND_POWER_OFF: u8 = b'P';
+
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
+))]
+fn oasis_portrait_orientation(event_type: u16, code: u16, value: i32) -> Option<FrameOrientation> {
+    const EV_ABS: u16 = 3;
+    const ABS_PRESSURE: u16 = 24;
+    if event_type != EV_ABS || code != ABS_PRESSURE {
+        return None;
+    }
+    match value {
+        15 | 17 | 19 => Some(FrameOrientation::Upright),
+        16 | 18 | 20 => Some(FrameOrientation::UpsideDown),
+        21 | 22 => None,
+        _ => None,
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 struct Arguments {
@@ -140,15 +163,17 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
 
     use ferrink_manifest::{ApplicationCatalog, MAX_APPLICATIONS, ValidatedApplicationManifest};
     use ferrink_platform::{
-        DeviceProfile, Gray8Conversion, LogicalTouchPhase, ProbeReport, RefreshCompletionPolicy,
-        RefreshMode, RefreshRegion, ResolvedRuntimeDevice,
+        DeviceProfile, Endianness, Gray8Conversion, InputEventDecoder, LogicalTouchPhase,
+        ProbeReport, RefreshCompletionPolicy, RefreshMode, RefreshRegion, ResolvedRuntimeDevice,
     };
     use ferrink_platform_kindle::{
         BoundedInputPump, ExclusiveInputSession, InputLoopLimits, InputPumpOutcome,
-        Koa3LightboxController, Koa3LightboxState, Koa3LightboxTransition, L0DisplayCore,
-        L0InputCore, LinuxForegroundDisplayTarget, LinuxReadOnlyDeviceIo, LinuxReadOnlyFramebuffer,
-        LinuxReadOnlyInput, SlintFrameBuffer, SlintPointerBridge, SlintPresentOutcome,
-        new_slint_window, revalidate_read_only,
+        InputReadStatus, Koa3LightboxController, Koa3LightboxState, Koa3LightboxTransition,
+        L0DisplayCore, L0InputCore, LinuxForegroundDisplayTarget, LinuxReadOnlyDeviceIo,
+        LinuxReadOnlyFramebuffer, LinuxReadOnlyInput, NonBlockingInputSource, ReadOnlyDeviceIo,
+        ReadOnlyInput, ReadOnlyInputSnapshot, SlintFrameBuffer, SlintPointerBridge,
+        SlintPresentConfig, SlintPresentOutcome, new_slint_window, orient_touch_contact,
+        revalidate_read_only,
     };
     use ferrink_shell::{
         KindleShellDevicePort, ShellController, ShellProfile, ShellWindow,
@@ -169,6 +194,10 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     const GUARDIAN_COMMAND_FD: i32 = 4;
     const MAX_INPUT_DIAGNOSTIC_READS: u32 = 32;
     const MAX_INPUT_DIAGNOSTIC_CONTACTS: u32 = 16;
+    const GYRO_RECORD_BUDGET: u32 = 10_000;
+    const GYRO_RECORD_RENEW_AT: u32 = 8_000;
+    const MAX_GYRO_READS_PER_TICK: u8 = 8;
+    const GYRO_READ_BUFFER_BYTES: usize = 256;
 
     fn read_regular_file(label: &str, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
         let canonical = path
@@ -261,6 +290,88 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         Ok(Some(unsafe { File::from_raw_fd(command_fd) }))
     }
 
+    struct GyroInput {
+        source: LinuxReadOnlyInput,
+        decoder: InputEventDecoder,
+        buffer: [u8; GYRO_READ_BUFFER_BYTES],
+    }
+
+    impl GyroInput {
+        fn read_latest_orientation(&mut self) -> Result<Option<FrameOrientation>, PlatformError> {
+            if self.decoder.decoded_records() >= GYRO_RECORD_RENEW_AT {
+                self.decoder.renew_record_budget();
+            }
+            let mut latest = None;
+            for _ in 0..MAX_GYRO_READS_PER_TICK {
+                match self
+                    .source
+                    .read_nonblocking(self.buffer.as_mut_slice())
+                    .map_err(platform_error)?
+                {
+                    InputReadStatus::Bytes(bytes) => {
+                        for event in self
+                            .decoder
+                            .push(&self.buffer[..bytes])
+                            .map_err(platform_error)?
+                        {
+                            if let Some(orientation) = oasis_portrait_orientation(
+                                event.event_type,
+                                event.code,
+                                event.value,
+                            ) {
+                                latest = Some(orientation);
+                            }
+                        }
+                    }
+                    InputReadStatus::WouldBlock | InputReadStatus::Interrupted => break,
+                    InputReadStatus::EndOfFile => {
+                        return Err(PlatformError::Other(
+                            "Oasis gyro input closed unexpectedly".to_owned(),
+                        ));
+                    }
+                }
+            }
+            Ok(latest)
+        }
+    }
+
+    fn open_gyro_input(
+        report: &ProbeReport,
+        io: &mut LinuxReadOnlyDeviceIo,
+    ) -> Result<Option<GyroInput>, Box<dyn std::error::Error>> {
+        let mut matches = report.inputs.iter().filter(|input| {
+            input.name.as_deref() == Some("bma_interrupt")
+                && input.capabilities.get("ev").map(String::as_str) == Some("d")
+                && input.capabilities.get("abs").map(String::as_str) == Some("3000000")
+                && input
+                    .axes
+                    .iter()
+                    .any(|axis| axis.code == 24 && axis.minimum == 15 && axis.maximum == 22)
+        });
+        let Some(capability) = matches.next() else {
+            return Ok(None);
+        };
+        if matches.next().is_some() {
+            return Err("multiple reviewed Oasis gyro inputs were reported".into());
+        }
+        let expected = ReadOnlyInputSnapshot::from_capability(capability);
+        let mut source = io.open_input_read_only_nonblocking(&capability.device)?;
+        let observed = source.query_snapshot(&expected)?;
+        if observed != expected {
+            return Err("Oasis gyro input changed after the passive probe".into());
+        }
+        let decoder = InputEventDecoder::try_new(
+            report.system.input_event_abi,
+            Endianness::Little,
+            NonZeroU32::new(GYRO_RECORD_BUDGET).expect("fixed gyro record budget is non-zero"),
+        )?;
+        Ok(Some(GyroInput {
+            source,
+            decoder,
+            buffer: [0; GYRO_READ_BUFFER_BYTES],
+        }))
+    }
+
     struct RuntimeState {
         exclusive: ExclusiveInputSession<LinuxReadOnlyInput, LinuxReadOnlyFramebuffer>,
         target: LinuxForegroundDisplayTarget,
@@ -273,6 +384,11 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         diagnostics: InputDiagnostics,
         lightbox: Koa3LightboxController,
         quick_settings_intent: Rc<Cell<QuickSettingsIntent>>,
+        gyro: Option<GyroInput>,
+        rotation_locked: Rc<Cell<bool>>,
+        rotation_lock_available: Rc<Cell<bool>>,
+        orientation: FrameOrientation,
+        touch_active: bool,
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +494,16 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                         self.diagnostics.read(bytes, contacts.len());
                         for contact in contacts {
                             let phase = contact.phase;
+                            self.touch_active = match phase {
+                                LogicalTouchPhase::Pressed | LogicalTouchPhase::Moved => true,
+                                LogicalTouchPhase::Released => false,
+                            };
+                            let contact = orient_touch_contact(
+                                contact,
+                                self.display.layout().visible(),
+                                self.orientation,
+                            )
+                            .map_err(platform_error)?;
                             let result = self
                                 .pointer
                                 .dispatch(window.window(), contact)
@@ -386,6 +512,27 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                         }
                     }
                     Err(error) => return Err(platform_error(error)),
+                }
+
+                if let Some(gyro) = self.gyro.as_mut() {
+                    match gyro.read_latest_orientation() {
+                        Ok(Some(orientation))
+                            if !self.rotation_locked.get()
+                                && !self.touch_active
+                                && orientation != self.orientation =>
+                        {
+                            self.orientation = orientation;
+                            first_frame = true;
+                            window.request_redraw();
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!("ferrink-shell-kindle: disabling gyro input: {error}");
+                            self.rotation_lock_available.set(false);
+                            self.rotation_locked.set(true);
+                            self.gyro = None;
+                        }
+                    }
                 }
 
                 if exit_requested.get() {
@@ -444,9 +591,12 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                 window,
                 &mut self.display,
                 &mut self.target,
-                mode,
-                RefreshCompletionPolicy::DoNotWait,
-                Gray8Conversion::Grayscale,
+                SlintPresentConfig::new(
+                    mode,
+                    RefreshCompletionPolicy::DoNotWait,
+                    Gray8Conversion::Grayscale,
+                    self.orientation,
+                ),
             ) {
                 Ok(outcome) => outcome,
                 Err(error) => {
@@ -559,6 +709,10 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             return Err(error.into());
         }
     };
+    let device_port = KindleShellDevicePort::open();
+    let (rotation_locked, rotation_lock_available) = device_port.rotation_states();
+    let gyro = open_gyro_input(&report, &mut device_io)?;
+    rotation_lock_available.set(gyro.is_some());
 
     let window = new_slint_window();
     let exit_requested = Rc::new(Cell::new(false));
@@ -578,6 +732,11 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             diagnostics: InputDiagnostics::default(),
             lightbox: Koa3LightboxController::default(),
             quick_settings_intent: Rc::clone(&quick_settings_intent),
+            gyro,
+            rotation_locked,
+            rotation_lock_available,
+            orientation: FrameOrientation::Upright,
+            touch_active: false,
         })),
         exit_requested: Rc::clone(&exit_requested),
         started: Instant::now(),
@@ -602,7 +761,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             QuickSettingsIntent::Closed
         });
     });
-    let _device_binding = install_device_handlers(&ui, KindleShellDevicePort::open());
+    let _device_binding = install_device_handlers(&ui, device_port);
     ui.run()?;
     let request = command_request
         .get()
@@ -866,5 +1025,26 @@ mod tests {
             encode_guardian_command(ShellCommand::PowerOff),
             Some(([b'P', 0], 1))
         );
+    }
+
+    #[test]
+    fn oasis_gyro_accepts_only_the_two_portrait_orientations() {
+        for value in [15, 17, 19] {
+            assert_eq!(
+                oasis_portrait_orientation(3, 24, value),
+                Some(FrameOrientation::Upright)
+            );
+        }
+        for value in [16, 18, 20] {
+            assert_eq!(
+                oasis_portrait_orientation(3, 24, value),
+                Some(FrameOrientation::UpsideDown)
+            );
+        }
+        for value in [14, 21, 22, 23] {
+            assert_eq!(oasis_portrait_orientation(3, 24, value), None);
+        }
+        assert_eq!(oasis_portrait_orientation(1, 24, 19), None);
+        assert_eq!(oasis_portrait_orientation(3, 25, 19), None);
     }
 }

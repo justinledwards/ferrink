@@ -65,8 +65,8 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         ResolvedRuntimeDevice,
     };
     use ferrink_platform_kindle::{
-        L0DisplayCore, LinuxForegroundDisplayTarget, LinuxReadOnlyDeviceIo, SlintFrameBuffer,
-        new_slint_window, revalidate_read_only,
+        FrameOrientation, L0DisplayCore, LinuxForegroundDisplayTarget, LinuxReadOnlyDeviceIo,
+        SlintFrameBuffer, SlintPresentConfig, new_slint_window, revalidate_read_only,
     };
     use ferrink_shell::{
         ShellController, ShellProfile, ShellWindow, configure_shell_window, install_shell_font,
@@ -201,9 +201,12 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                     &window,
                     &mut display,
                     &mut target,
-                    RefreshMode::Full,
-                    RefreshCompletionPolicy::DoNotWait,
-                    Gray8Conversion::Grayscale,
+                    SlintPresentConfig::new(
+                        RefreshMode::Full,
+                        RefreshCompletionPolicy::DoNotWait,
+                        Gray8Conversion::Grayscale,
+                        FrameOrientation::Upright,
+                    ),
                 ));
 
                 if presentation.was_presented() {
