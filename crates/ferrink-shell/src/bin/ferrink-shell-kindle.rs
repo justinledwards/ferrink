@@ -65,6 +65,33 @@ fn oasis_portrait_orientation(event_type: u16, code: u16, value: i32) -> Option<
     }
 }
 
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
+))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KindleCoverState {
+    Open,
+    Closed,
+}
+
+#[cfg(any(
+    test,
+    all(target_os = "linux", target_arch = "arm", target_pointer_width = "32")
+))]
+fn kindle_cover_state(event_type: u16, code: u16, value: i32) -> Option<KindleCoverState> {
+    const EV_SW: u16 = 5;
+    const SW_LID: u16 = 0;
+    if event_type != EV_SW || code != SW_LID {
+        return None;
+    }
+    match value {
+        0 => Some(KindleCoverState::Open),
+        1 => Some(KindleCoverState::Closed),
+        _ => None,
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct Arguments {
     profile: PathBuf,
@@ -176,7 +203,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         revalidate_read_only,
     };
     use ferrink_shell::{
-        KindleShellDevicePort, ShellController, ShellProfile, ShellWindow,
+        KindleShellDevicePort, ShellController, ShellData, ShellProfile, ShellWindow,
         configure_application_catalog, configure_shell_window, install_device_handlers,
         install_quick_settings_observer, install_shell_font, install_shell_handlers, sync_shell_ui,
     };
@@ -198,6 +225,10 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     const GYRO_RECORD_RENEW_AT: u32 = 8_000;
     const MAX_GYRO_READS_PER_TICK: u8 = 8;
     const GYRO_READ_BUFFER_BYTES: usize = 256;
+    const COVER_RECORD_BUDGET: u32 = 10_000;
+    const COVER_RECORD_RENEW_AT: u32 = 8_000;
+    const MAX_COVER_READS_PER_TICK: u8 = 8;
+    const COVER_READ_BUFFER_BYTES: usize = 256;
 
     fn read_regular_file(label: &str, path: &Path) -> Result<String, Box<dyn std::error::Error>> {
         let canonical = path
@@ -372,6 +403,87 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         }))
     }
 
+    struct CoverInput {
+        source: LinuxReadOnlyInput,
+        decoder: InputEventDecoder,
+        buffer: [u8; COVER_READ_BUFFER_BYTES],
+    }
+
+    impl CoverInput {
+        fn read_latest_state(&mut self) -> Result<Option<KindleCoverState>, PlatformError> {
+            if self.decoder.decoded_records() >= COVER_RECORD_RENEW_AT {
+                self.decoder.renew_record_budget();
+            }
+            let mut latest = None;
+            for _ in 0..MAX_COVER_READS_PER_TICK {
+                match self
+                    .source
+                    .read_nonblocking(self.buffer.as_mut_slice())
+                    .map_err(platform_error)?
+                {
+                    InputReadStatus::Bytes(bytes) => {
+                        for event in self
+                            .decoder
+                            .push(&self.buffer[..bytes])
+                            .map_err(platform_error)?
+                        {
+                            if let Some(state) =
+                                kindle_cover_state(event.event_type, event.code, event.value)
+                            {
+                                latest = Some(state);
+                            }
+                        }
+                    }
+                    InputReadStatus::WouldBlock | InputReadStatus::Interrupted => break,
+                    InputReadStatus::EndOfFile => {
+                        return Err(PlatformError::Other(
+                            "Kindle cover input closed unexpectedly".to_owned(),
+                        ));
+                    }
+                }
+            }
+            Ok(latest)
+        }
+    }
+
+    fn open_cover_input(
+        report: &ProbeReport,
+        io: &mut LinuxReadOnlyDeviceIo,
+    ) -> Result<CoverInput, Box<dyn std::error::Error>> {
+        let mut matches = report.inputs.iter().filter(|input| {
+            input.name.as_deref() == Some("hall_sensor_disp")
+                && input.id.bus == Some(0)
+                && input.id.vendor == Some(0)
+                && input.id.product == Some(0)
+                && input.id.version == Some(0)
+                && input.capabilities.get("ev").map(String::as_str) == Some("21")
+                && input.capabilities.get("sw").map(String::as_str) == Some("1")
+                && input.axes.is_empty()
+        });
+        let capability = matches
+            .next()
+            .ok_or("the reviewed Kindle cover input was not reported")?;
+        if matches.next().is_some() {
+            return Err("multiple reviewed Kindle cover inputs were reported".into());
+        }
+        let expected = ReadOnlyInputSnapshot::from_capability(capability);
+        let mut source = io.open_input_read_only_nonblocking(&capability.device)?;
+        let observed = source.query_snapshot(&expected)?;
+        if observed != expected {
+            return Err("Kindle cover input changed after the passive probe".into());
+        }
+        let decoder = InputEventDecoder::try_new(
+            report.system.input_event_abi,
+            Endianness::Little,
+            NonZeroU32::new(COVER_RECORD_BUDGET).expect("fixed cover record budget is non-zero"),
+        )?;
+        Ok(CoverInput {
+            source,
+            decoder,
+            buffer: [0; COVER_READ_BUFFER_BYTES],
+        })
+    }
+
     struct RuntimeState {
         exclusive: ExclusiveInputSession<LinuxReadOnlyInput, LinuxReadOnlyFramebuffer>,
         target: LinuxForegroundDisplayTarget,
@@ -385,6 +497,8 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
         lightbox: Koa3LightboxController,
         quick_settings_intent: Rc<Cell<QuickSettingsIntent>>,
         gyro: Option<GyroInput>,
+        cover: Option<CoverInput>,
+        shell_ui: Rc<RefCell<Option<slint::Weak<ShellWindow>>>>,
         rotation_locked: Rc<Cell<bool>>,
         rotation_lock_available: Rc<Cell<bool>>,
         orientation: FrameOrientation,
@@ -512,6 +626,35 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
                         }
                     }
                     Err(error) => return Err(platform_error(error)),
+                }
+
+                if let Some(cover) = self.cover.as_mut() {
+                    match cover.read_latest_state() {
+                        Ok(Some(state)) => {
+                            let sleeping = state == KindleCoverState::Closed;
+                            let ui = self
+                                .shell_ui
+                                .borrow()
+                                .as_ref()
+                                .and_then(slint::Weak::upgrade)
+                                .ok_or_else(|| {
+                                    PlatformError::Other(
+                                        "Kindle cover state lost the shell UI".to_owned(),
+                                    )
+                                })?;
+                            ui.set_quick_settings_open(false);
+                            ui.global::<ShellData>().set_sleeping(sleeping);
+                            first_frame = true;
+                            window.request_redraw();
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!(
+                                "ferrink-shell-kindle: disabling cover indicator input: {error}"
+                            );
+                            self.cover = None;
+                        }
+                    }
                 }
 
                 if let Some(gyro) = self.gyro.as_mut() {
@@ -712,12 +855,14 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
     let device_port = KindleShellDevicePort::open();
     let (rotation_locked, rotation_lock_available) = device_port.rotation_states();
     let gyro = open_gyro_input(&report, &mut device_io)?;
+    let cover = open_cover_input(&report, &mut device_io)?;
     rotation_lock_available.set(gyro.is_some());
 
     let window = new_slint_window();
     let exit_requested = Rc::new(Cell::new(false));
     let command_request = Rc::new(Cell::new(None));
     let quick_settings_intent = Rc::new(Cell::new(QuickSettingsIntent::Closed));
+    let shell_ui = Rc::new(RefCell::new(None));
     slint::platform::set_platform(Box::new(KindlePlatform {
         window,
         runtime: RefCell::new(Some(RuntimeState {
@@ -733,6 +878,8 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
             lightbox: Koa3LightboxController::default(),
             quick_settings_intent: Rc::clone(&quick_settings_intent),
             gyro,
+            cover: Some(cover),
+            shell_ui: Rc::clone(&shell_ui),
             rotation_locked,
             rotation_lock_available,
             orientation: FrameOrientation::Upright,
@@ -744,6 +891,7 @@ fn run_on_target(arguments: Arguments) -> Result<(), Box<dyn std::error::Error>>
 
     install_shell_font()?;
     let ui = ShellWindow::new()?;
+    *shell_ui.borrow_mut() = Some(ui.as_weak());
     configure_shell_window(&ui, ShellProfile::Oasis3)?;
     configure_application_catalog(&ui, &application_catalog)?;
     let controller = Rc::new(RefCell::new(ShellController::for_device()));
@@ -1046,5 +1194,14 @@ mod tests {
         }
         assert_eq!(oasis_portrait_orientation(1, 24, 19), None);
         assert_eq!(oasis_portrait_orientation(3, 25, 19), None);
+    }
+
+    #[test]
+    fn cover_indicator_accepts_only_lid_switch_transitions() {
+        assert_eq!(kindle_cover_state(5, 0, 0), Some(KindleCoverState::Open));
+        assert_eq!(kindle_cover_state(5, 0, 1), Some(KindleCoverState::Closed));
+        for (event_type, code, value) in [(5, 0, -1), (5, 0, 2), (5, 1, 1), (1, 0, 1)] {
+            assert_eq!(kindle_cover_state(event_type, code, value), None);
+        }
     }
 }

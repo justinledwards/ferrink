@@ -49,10 +49,11 @@ enum Scenario {
     RebootNotice,
     PowerOffConfirmation,
     PowerOffNotice,
+    Sleeping,
 }
 
 impl Scenario {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 20] = [
         Self::Home,
         Self::QuickSettings,
         Self::Settings,
@@ -72,6 +73,7 @@ impl Scenario {
         Self::RebootNotice,
         Self::PowerOffConfirmation,
         Self::PowerOffNotice,
+        Self::Sleeping,
     ];
 
     const fn slug(self) -> &'static str {
@@ -95,6 +97,7 @@ impl Scenario {
             Self::RebootNotice => "reboot-notice",
             Self::PowerOffConfirmation => "power-off-confirmation",
             Self::PowerOffNotice => "power-off-notice",
+            Self::Sleeping => "sleeping",
         }
     }
 
@@ -164,6 +167,7 @@ impl Scenario {
                 assert_eq!(controller.dispatch(ShellAction::RequestPowerOff), None);
                 record_inert_command(controller, ShellAction::ConfirmPowerAction);
             }
+            Self::Sleeping => ui.global::<ShellData>().set_sleeping(true),
         }
     }
 

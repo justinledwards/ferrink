@@ -33,6 +33,7 @@ export struct LauncherBackgroundOption {
 
 export global ShellData {
     in property <ShellPage> page: ShellPage.home;
+    in property <bool> sleeping: false;
     in property <ConfirmationKind> confirmation: ConfirmationKind.none;
     in property <AlertKind> alert: AlertKind.none;
     in property <int> recovery-seconds: 0;
@@ -846,7 +847,7 @@ export component ShellWindow inherits Window {
     in-out property <bool> background-picker-open: false;
     private property <bool> blocking-modal-visible: ShellData.confirmation != ConfirmationKind.none || ShellData.alert != AlertKind.none;
 
-    private property <bool> modal-visible: root.quick-settings-open || root.blocking-modal-visible;
+    private property <bool> modal-visible: ShellData.sleeping || root.quick-settings-open || root.blocking-modal-visible;
 
     changed quick-settings-open => {
         ShellActions.quick-settings-changed(
@@ -1657,6 +1658,67 @@ export component ShellWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+
+    if ShellData.sleeping : sleep-overlay := Rectangle {
+        background: #eeece3;
+
+        TouchArea {}
+
+        VerticalLayout {
+            padding-left: 74px * root.ui-scale;
+            padding-right: 74px * root.ui-scale;
+            padding-top: 90px * root.ui-scale;
+            padding-bottom: 90px * root.ui-scale;
+
+            Rectangle { vertical-stretch: 1; }
+
+            Rectangle {
+                height: 270px * root.ui-scale;
+                background: #f7f6f0;
+                border-width: 4px * root.ui-scale;
+                border-color: #111111;
+
+                VerticalLayout {
+                    padding-left: 38px * root.ui-scale;
+                    padding-right: 38px * root.ui-scale;
+                    padding-top: 34px * root.ui-scale;
+                    padding-bottom: 34px * root.ui-scale;
+                    spacing: 14px * root.ui-scale;
+
+                    Text {
+                        text: "FERRINK";
+                        color: #4b4a46;
+                        font-size: 15px * root.ui-scale;
+                        font-weight: 700;
+                        letter-spacing: 2px * root.ui-scale;
+                        horizontal-alignment: center;
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
+
+                    Text {
+                        text: "Sleeping";
+                        color: #111111;
+                        font-size: 46px * root.ui-scale;
+                        font-weight: 800;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: "Open the cover or press the power button to wake.";
+                        color: #4b4a46;
+                        font-size: 18px * root.ui-scale;
+                        horizontal-alignment: center;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { vertical-stretch: 1; }
                 }
             }
 
