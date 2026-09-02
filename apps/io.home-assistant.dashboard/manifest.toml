@@ -2,6 +2,7 @@ manifest_version = 1
 id = "io.home-assistant.dashboard"
 name = "Home Assistant"
 description = "Control your home from the Kindle dashboard"
+launcher_position = 10
 icon = "/mnt/us/ferrink/apps/io.home-assistant.dashboard/icon.png"
 spdx_license = "GPL-3.0-only"
 command = ["/mnt/us/ferrink/apps/io.home-assistant.dashboard/launch-kindle.sh"]

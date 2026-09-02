@@ -239,7 +239,7 @@ pub fn configure_shell_window(
     Ok(())
 }
 
-/// Replaces the launcher rows with one stable-ID-sorted manifest catalog.
+/// Replaces the launcher rows with one deterministically positioned manifest catalog.
 pub fn configure_application_catalog(
     ui: &ShellWindow,
     catalog: &ApplicationCatalog,

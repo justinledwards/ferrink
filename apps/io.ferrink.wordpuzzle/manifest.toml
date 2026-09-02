@@ -2,6 +2,7 @@ manifest_version = 1
 id = "io.ferrink.wordpuzzle"
 name = "Word Puzzle"
 description = "Play a five-letter word game"
+launcher_position = 40
 icon = "/mnt/us/ferrink/apps/io.ferrink.wordpuzzle/icon.png"
 spdx_license = "LicenseRef-Proprietary"
 command = ["/mnt/us/ferrink/apps/io.ferrink.wordpuzzle/launch-kindle.sh"]

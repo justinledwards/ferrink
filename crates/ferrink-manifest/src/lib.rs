@@ -41,6 +41,9 @@ pub struct ApplicationManifest {
     pub name: String,
     /// One-line user-facing purpose shown in the launcher.
     pub description: String,
+    /// Ascending launcher position. Equal positions fall back to stable ID order.
+    #[serde(default = "default_launcher_position")]
+    pub launcher_position: u16,
     /// Absolute path to a package-owned PNG launcher icon.
     pub icon: String,
     /// SPDX license expression for the application package.
@@ -234,9 +237,16 @@ impl ApplicationCatalog {
         self.applications.get(id)
     }
 
-    /// Iterates in stable identifier order.
+    /// Iterates in launcher position order, using stable IDs to break ties.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &ValidatedApplicationManifest> {
-        self.applications.values()
+        let mut applications: Vec<_> = self.applications.values().collect();
+        applications.sort_by(|left, right| {
+            left.manifest()
+                .launcher_position
+                .cmp(&right.manifest().launcher_position)
+                .then_with(|| left.manifest().id.cmp(&right.manifest().id))
+        });
+        applications.into_iter()
     }
 
     /// Returns the number of registered applications.
@@ -250,6 +260,10 @@ impl ApplicationCatalog {
     pub fn is_empty(&self) -> bool {
         self.applications.is_empty()
     }
+}
+
+const fn default_launcher_position() -> u16 {
+    u16::MAX
 }
 
 fn validate_manifest(manifest: &ApplicationManifest, violations: &mut Vec<ManifestViolation>) {
@@ -680,7 +694,7 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
     }
 
     #[test]
-    fn three_application_catalog_is_sorted_by_stable_id() {
+    fn three_application_catalog_is_ordered_deterministically() {
         let mut catalog = ApplicationCatalog::default();
         catalog
             .register(ValidatedApplicationManifest::from_toml(KOREADER).unwrap())
@@ -704,6 +718,31 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
                 "org.koreader.reader"
             ]
         );
+    }
+
+    #[test]
+    fn launcher_positions_precede_stable_id_tie_breaking() {
+        let positioned_reader = KOREADER.replace(
+            "description = \"Open your library and continue reading\"",
+            "description = \"Open your library and continue reading\"\nlauncher_position = 10",
+        );
+        let positioned_home = HOME_ASSISTANT.replace(
+            "description = \"Control your home from the Kindle dashboard\"",
+            "description = \"Control your home from the Kindle dashboard\"\nlauncher_position = 20",
+        );
+        let mut catalog = ApplicationCatalog::default();
+        catalog
+            .register(ValidatedApplicationManifest::from_toml(&positioned_home).unwrap())
+            .unwrap();
+        catalog
+            .register(ValidatedApplicationManifest::from_toml(&positioned_reader).unwrap())
+            .unwrap();
+
+        let ids: Vec<_> = catalog
+            .iter()
+            .map(|application| application.manifest().id.as_str())
+            .collect();
+        assert_eq!(ids, ["org.koreader.reader", "io.home-assistant.dashboard"]);
     }
 
     #[test]

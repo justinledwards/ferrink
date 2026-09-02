@@ -2,6 +2,7 @@ manifest_version = 1
 id = "org.koreader.reader"
 name = "KOReader"
 description = "Open your library and continue reading"
+launcher_position = 20
 icon = "/mnt/us/ferrink/apps/org.koreader.reader/icon.png"
 spdx_license = "AGPL-3.0-only"
 command = ["/mnt/us/ferrink/apps/org.koreader.reader/launch-kindle.sh"]
