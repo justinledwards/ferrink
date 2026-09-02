@@ -249,8 +249,8 @@ fn koa3_physical_taps_reach_the_real_top_bar_and_application_row() -> Result<(),
     let mut trace = Vec::new();
     for event in [
         input_event(1, 3, 0x39, 1),
-        input_event(2, 3, 0x35, 500),
-        input_event(3, 3, 0x36, 435),
+        input_event(2, 3, 0x35, 260),
+        input_event(3, 3, 0x36, 275),
         input_event(4, 0, 0, 0),
         input_event(5, 3, 0x39, -1),
         input_event(6, 0, 0, 0),
