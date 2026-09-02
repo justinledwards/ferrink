@@ -13,7 +13,7 @@ handoff = "supervisor"
 [requirements]
 wifi = false
 stock_services = ["com.lab126.powerd"]
-prevent_suspend = true
+prevent_suspend = false
 
 [lifecycle]
 startup_timeout_seconds = 20

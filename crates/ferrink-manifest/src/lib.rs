@@ -676,7 +676,7 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
             DisplayHandoff::Supervisor
         );
         assert!(!application.manifest().requirements.wifi);
-        assert!(application.manifest().requirements.prevent_suspend);
+        assert!(!application.manifest().requirements.prevent_suspend);
     }
 
     #[test]
