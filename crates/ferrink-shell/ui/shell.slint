@@ -149,7 +149,7 @@ component HaloedApplicationLabel inherits Rectangle {
         height: parent.height;
         text: root.text;
         color: #111111;
-        font-size: 24px * root.ui-scale;
+        font-size: 18px * root.ui-scale;
         font-weight: 750;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -163,7 +163,7 @@ component HaloedApplicationLabel inherits Rectangle {
         height: parent.height;
         text: root.text;
         color: root.enabled ? #f7f6f0 : #d4d2ca;
-        font-size: 24px * root.ui-scale;
+        font-size: 18px * root.ui-scale;
         font-weight: 750;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -257,8 +257,8 @@ component ApplicationTile inherits Rectangle {
         if root.focus-request > 0 && root.enabled { nav-action.focus(); }
     }
 
-    width: 298px * root.ui-scale;
-    height: 220px * root.ui-scale;
+    width: 214px * root.ui-scale;
+    height: 180px * root.ui-scale;
     background: transparent;
     accessible-role: button;
     accessible-label: root.title + ". " + root.detail;
@@ -266,25 +266,25 @@ component ApplicationTile inherits Rectangle {
 
     VerticalLayout {
         alignment: center;
-        spacing: 12px * root.ui-scale;
+        spacing: 6px * root.ui-scale;
 
         HorizontalLayout {
-            height: 154px * root.ui-scale;
+            height: 128px * root.ui-scale;
             spacing: 0px;
 
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
-                width: 154px * root.ui-scale;
+                width: 116px * root.ui-scale;
                 background: nav-action.pressed ? #111111 : (root.enabled ? #f7f6f0 : #dedcd3);
                 border-width: (nav-action.has-focus ? 5px : 2px) * root.ui-scale;
                 border-color: #111111;
-                border-radius: 28px * root.ui-scale;
+                border-radius: 20px * root.ui-scale;
 
                 Image {
-                    x: 22px * root.ui-scale;
-                    y: 22px * root.ui-scale;
-                    width: parent.width - 44px * root.ui-scale;
-                    height: parent.height - 44px * root.ui-scale;
+                    x: 17px * root.ui-scale;
+                    y: 17px * root.ui-scale;
+                    width: parent.width - 34px * root.ui-scale;
+                    height: parent.height - 34px * root.ui-scale;
                     source: root.icon;
                     colorize: nav-action.pressed ? white : (root.enabled ? #111111 : #777773);
                     image-fit: contain;
@@ -294,7 +294,7 @@ component ApplicationTile inherits Rectangle {
         }
 
         HaloedApplicationLabel {
-            height: 54px * root.ui-scale;
+            height: 46px * root.ui-scale;
             text: root.title;
             ui-scale: root.ui-scale;
             enabled: root.enabled;
@@ -1001,21 +1001,28 @@ export component ShellWindow inherits Window {
                 padding-bottom: 24px * root.ui-scale;
                 spacing: 16px * root.ui-scale;
 
-                app-grid := GridLayout {
-                    height: ((ShellData.applications.length + 1) / 2) * 220px * root.ui-scale;
-                    spacing: 16px * root.ui-scale;
+                app-grid-region := Rectangle {
+                    height: ((ShellData.applications.length + 2) / 3) * 180px * root.ui-scale;
+                    background: transparent;
 
-                    Row {
-                        for application[index] in ShellData.applications : ApplicationTile {
-                            row: index / 2;
-                            col: mod(index, 2);
-                            title: application.title;
-                            detail: application.detail;
-                            icon: application.icon;
-                            ui-scale: root.ui-scale;
-                            enabled: !root.modal-visible && application.available;
-                            focus-request: index == 0 ? root.focus-generation : 0;
-                            activated => { ShellActions.launch-application(index); }
+                    app-grid := GridLayout {
+                        x: (parent.width - 662px * root.ui-scale) / 2;
+                        width: 662px * root.ui-scale;
+                        height: parent.height;
+                        spacing: 10px * root.ui-scale;
+
+                        Row {
+                            for application[index] in ShellData.applications : ApplicationTile {
+                                row: index / 3;
+                                col: mod(index, 3);
+                                title: application.title;
+                                detail: application.detail;
+                                icon: application.icon;
+                                ui-scale: root.ui-scale;
+                                enabled: !root.modal-visible && application.available;
+                                focus-request: index == 0 ? root.focus-generation : 0;
+                                activated => { ShellActions.launch-application(index); }
+                            }
                         }
                     }
                 }

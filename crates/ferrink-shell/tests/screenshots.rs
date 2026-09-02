@@ -11,7 +11,7 @@ use ferrink_shell::{
 };
 use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
 use slint::platform::{Key, Platform, PlatformError, WindowAdapter, WindowEvent};
-use slint::{ComponentHandle, LogicalPosition, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
+use slint::{ComponentHandle, LogicalPosition, Model, ModelRc, PhysicalSize, Rgb8Pixel, VecModel};
 
 const UPDATE_ENV: &str = "FERRINK_UPDATE_SCREENSHOTS";
 
@@ -103,7 +103,8 @@ impl Scenario {
 
     fn apply(self, ui: &ShellWindow, controller: &mut ShellController) {
         match self {
-            Self::Home | Self::KeyboardFocus => {}
+            Self::Home => configure_full_launcher(ui),
+            Self::KeyboardFocus => {}
             Self::QuickSettings => ui.set_quick_settings_open(true),
             Self::Settings | Self::BackgroundPicker | Self::SettingsBottom => {
                 assert_eq!(controller.dispatch(ShellAction::OpenSettings), None);
@@ -188,6 +189,35 @@ impl Scenario {
             });
         }
     }
+}
+
+fn configure_full_launcher(ui: &ShellWindow) {
+    let data = ui.global::<ShellData>();
+    let current = data.get_applications();
+    let home_assistant = current.row_data(0).expect("preview Home Assistant app");
+    let koreader = current.row_data(1).expect("preview KOReader app");
+    data.set_applications(ModelRc::new(VecModel::from(vec![
+        home_assistant.clone(),
+        koreader.clone(),
+        RegisteredApplication {
+            title: "Ferrink Sync".into(),
+            detail: "Synchronize reading material".into(),
+            icon: koreader.icon.clone(),
+            available: true,
+        },
+        RegisteredApplication {
+            title: "Word Puzzle".into(),
+            detail: "Daily word puzzle".into(),
+            icon: home_assistant.icon.clone(),
+            available: true,
+        },
+        RegisteredApplication {
+            title: "Ferrink Web".into(),
+            detail: "Gemini and Markdown reader".into(),
+            icon: koreader.icon,
+            available: true,
+        },
+    ])));
 }
 
 fn record_inert_command(controller: &mut ShellController, action: ShellAction) {
