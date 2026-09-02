@@ -1,12 +1,41 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Five-letter word puzzle">
-  <g fill="none" stroke="#111111" stroke-width="8" stroke-linejoin="round">
-    <rect x="16" y="48" width="28" height="28"/>
-    <rect x="49" y="48" width="28" height="28" fill="#777777"/>
-    <rect x="82" y="48" width="28" height="28"/>
-    <rect x="115" y="48" width="28" height="28" fill="#111111"/>
-    <rect x="148" y="48" width="28" height="28"/>
-    <rect x="28" y="94" width="136" height="54" rx="8"/>
-    <path d="M50 116h18M50 132h18M87 116h18M87 132h18M124 116h18M124 132h18" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Five-column word puzzle grid">
+  <rect width="192" height="192" fill="#f7f6f0"/>
+
+  <g fill="#111111">
+    <rect x="11" y="3" width="170" height="5"/>
+    <rect x="11" y="34" width="170" height="5"/>
+    <rect x="11" y="65" width="170" height="5"/>
+    <rect x="11" y="96" width="170" height="5"/>
+    <rect x="11" y="127" width="170" height="5"/>
+    <rect x="11" y="158" width="170" height="5"/>
+    <rect x="11" y="187" width="170" height="5"/>
+
+    <rect x="11" y="3" width="5" height="189"/>
+    <rect x="45" y="3" width="5" height="189"/>
+    <rect x="79" y="3" width="5" height="189"/>
+    <rect x="113" y="3" width="5" height="189"/>
+    <rect x="147" y="3" width="5" height="189"/>
+    <rect x="176" y="3" width="5" height="189"/>
+
+    <rect x="84" y="39" width="29" height="26"/>
+
+    <rect x="50" y="70" width="29" height="26"/>
+    <rect x="147" y="70" width="29" height="26"/>
+
+    <rect x="16" y="101" width="29" height="26"/>
+    <rect x="84" y="101" width="29" height="26"/>
+    <rect x="118" y="101" width="29" height="26"/>
+
+    <rect x="50" y="132" width="29" height="26"/>
+    <rect x="84" y="132" width="29" height="26"/>
+    <rect x="118" y="132" width="29" height="26"/>
+    <rect x="147" y="132" width="29" height="26"/>
+
+    <rect x="16" y="163" width="29" height="24"/>
+    <rect x="50" y="163" width="29" height="24"/>
+    <rect x="84" y="163" width="29" height="24"/>
+    <rect x="118" y="163" width="29" height="24"/>
+    <rect x="147" y="163" width="29" height="24"/>
   </g>
 </svg>

@@ -275,8 +275,8 @@ component ApplicationTile inherits Rectangle {
             Rectangle { horizontal-stretch: 1; }
             Rectangle {
                 width: 116px * root.ui-scale;
-                background: nav-action.pressed ? #111111 : (root.enabled ? #f7f6f0 : #dedcd3);
-                border-width: (nav-action.has-focus ? 5px : 2px) * root.ui-scale;
+                background: nav-action.pressed ? #dedcd3 : (root.enabled ? #f7f6f0 : #dedcd3);
+                border-width: (nav-action.has-focus || nav-action.pressed ? 5px : 2px) * root.ui-scale;
                 border-color: #111111;
                 border-radius: 20px * root.ui-scale;
 
@@ -286,7 +286,7 @@ component ApplicationTile inherits Rectangle {
                     width: parent.width - 34px * root.ui-scale;
                     height: parent.height - 34px * root.ui-scale;
                     source: root.icon;
-                    colorize: nav-action.pressed ? white : (root.enabled ? #111111 : #777773);
+                    opacity: root.enabled ? 1 : 0.45;
                     image-fit: contain;
                 }
             }
