@@ -1,0 +1,24 @@
+manifest_version = 1
+id = "io.ferrink.wordpuzzle"
+name = "Word Puzzle"
+description = "Play a five-letter word game"
+icon = "/mnt/us/ferrink/apps/io.ferrink.wordpuzzle/icon.png"
+spdx_license = "LicenseRef-Proprietary"
+command = ["/mnt/us/ferrink/apps/io.ferrink.wordpuzzle/launch-kindle.sh"]
+
+[display]
+mode = "framebuffer"
+handoff = "supervisor"
+
+[requirements]
+wifi = false
+stock_services = ["com.lab126.powerd"]
+prevent_suspend = true
+
+[lifecycle]
+startup_timeout_seconds = 20
+exit_timeout_seconds = 10
+restart = "never"
+
+[environment]
+PATH = "/usr/sbin:/usr/bin:/sbin:/bin"

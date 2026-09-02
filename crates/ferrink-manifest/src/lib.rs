@@ -627,6 +627,8 @@ restart = "never"
 PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
 "#;
 
+    const WORD_PUZZLE: &str = include_str!("../../../apps/io.ferrink.wordpuzzle/manifest.toml");
+
     #[test]
     fn exact_koreader_manifest_registers_by_stable_id() {
         let application = ValidatedApplicationManifest::from_toml(KOREADER).unwrap();
@@ -662,7 +664,23 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
     }
 
     #[test]
-    fn two_application_catalog_is_sorted_by_stable_id() {
+    fn exact_word_puzzle_manifest_uses_supervisor_handoff() {
+        let application = ValidatedApplicationManifest::from_toml(WORD_PUZZLE).unwrap();
+        assert_eq!(application.manifest().id, "io.ferrink.wordpuzzle");
+        assert_eq!(
+            application.manifest().display.mode,
+            DisplayMode::Framebuffer
+        );
+        assert_eq!(
+            application.manifest().display.handoff,
+            DisplayHandoff::Supervisor
+        );
+        assert!(!application.manifest().requirements.wifi);
+        assert!(application.manifest().requirements.prevent_suspend);
+    }
+
+    #[test]
+    fn three_application_catalog_is_sorted_by_stable_id() {
         let mut catalog = ApplicationCatalog::default();
         catalog
             .register(ValidatedApplicationManifest::from_toml(KOREADER).unwrap())
@@ -670,12 +688,22 @@ PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
         catalog
             .register(ValidatedApplicationManifest::from_toml(HOME_ASSISTANT).unwrap())
             .unwrap();
+        catalog
+            .register(ValidatedApplicationManifest::from_toml(WORD_PUZZLE).unwrap())
+            .unwrap();
 
         let ids: Vec<_> = catalog
             .iter()
             .map(|application| application.manifest().id.as_str())
             .collect();
-        assert_eq!(ids, ["io.home-assistant.dashboard", "org.koreader.reader"]);
+        assert_eq!(
+            ids,
+            [
+                "io.ferrink.wordpuzzle",
+                "io.home-assistant.dashboard",
+                "org.koreader.reader"
+            ]
+        );
     }
 
     #[test]

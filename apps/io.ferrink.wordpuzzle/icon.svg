@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Five-letter word puzzle">
+  <g fill="none" stroke="#111111" stroke-width="8" stroke-linejoin="round">
+    <rect x="16" y="48" width="28" height="28"/>
+    <rect x="49" y="48" width="28" height="28" fill="#777777"/>
+    <rect x="82" y="48" width="28" height="28"/>
+    <rect x="115" y="48" width="28" height="28" fill="#111111"/>
+    <rect x="148" y="48" width="28" height="28"/>
+    <rect x="28" y="94" width="136" height="54" rx="8"/>
+    <path d="M50 116h18M50 132h18M87 116h18M87 132h18M124 116h18M124 132h18" stroke-linecap="round"/>
+  </g>
+</svg>
